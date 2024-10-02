@@ -4,9 +4,17 @@
 #include <iostream>
 #include <fstream>
 
-bool output_elapsed_time = false;
 
+bool _isOutput = false;
+bool _isRankAscending = false;
 int main(int argc, char *argv[]) {
+    for (int i = 1; i < argc; i++) {
+      std::string argument = argv[i];
+
+      if (argument == "--output") _isOutput = true;
+      else if (argument == "--rank-ascending") _isRankAscending = true;
+    }
+
     int procRank, size;
     
     MPI_Init(&argc, &argv); 
@@ -23,7 +31,8 @@ int main(int argc, char *argv[]) {
       printf("\nHello from process %3d", procRank); // printing hello for process 0
       for (int i = 1; i < size; i++) // starting with 1 because this happends in the process 0
       {
-        MPI_Recv(&recvRank, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &recvStatus);
+        int dest = _isRankAscending ? i : MPI_ANY_SOURCE;
+        MPI_Recv(&recvRank, 1, MPI_INT, dest, MPI_ANY_TAG, MPI_COMM_WORLD, &recvStatus);
         printf("\nHello from process %3d", recvRank); // printing hello for received process
       }
 
@@ -33,7 +42,7 @@ int main(int argc, char *argv[]) {
       std::cout << "\nTime taken: " << elapsed_ns.count() << " ns\n";
 
       // Output elapsed time to a file if specified in the command line arguments
-      if (output_elapsed_time) {
+      if (_isOutput) {
         std::ofstream outfile;
         outfile.open("temp/output.txt", std::ios::app);
         outfile << "P=" << size << " | T=" << elapsed_ns.count() << " ns\n";
