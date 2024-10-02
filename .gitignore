@@ -1,0 +1,6 @@
+build
+MSMPI
+SDK
+.vscode
+.vs
+*.exe
