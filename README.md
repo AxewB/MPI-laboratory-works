@@ -1,6 +1,6 @@
 [MSMPI and MPI SDK](https://www.microsoft.com/en-us/download/details.aspx?id=57467) should be installed in directory of the project to be able to use MPI library.
 
-Also need to add `${MSMPI_INC}` and `${MSMPI_LIB64}` into 'includePath' setting.
+Make sure to `${MSMPI_INC}` and `${MSMPI_LIB64}` be added into 'includePath' setting.
 
 Script to compile with GCC
 ```bash
