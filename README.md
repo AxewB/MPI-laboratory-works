@@ -21,3 +21,4 @@ Also can be added to tasks.json (for VSCode it's `Terminal > Configure default b
 "${fileDirname}\\${fileBasenameNoExtension}.exe"
 ```
 
+To run .exe file type in the terminal `mpiexec -n 4 filename` for 4 processes
