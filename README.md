@@ -5,6 +5,9 @@ Make sure to `${MSMPI_INC}` and `${MSMPI_LIB64}` be added into 'includePath' set
 Script to compile with GCC
 ```bash
 g++ filename.cpp -I $env:MSMPI_INC\ -L $env:MSMPI_LIB64\ -lmsmpi -o filename
+
+# to build and run at the same time
+g++ main.cpp -I $env:MSMPI_INC\ -L $env:MSMPI_LIB64\ -lmsmpi -o main | mpiexec -n 4 main
 ```
 
 Also can be added to tasks.json (for VSCode it's `Terminal > Configure default build task`) for automatic compilation. `args` should contain following arguments:
@@ -22,3 +25,5 @@ Also can be added to tasks.json (for VSCode it's `Terminal > Configure default b
 ```
 
 To run .exe file type in the terminal `mpiexec -n 4 filename` for 4 processes
+
+
