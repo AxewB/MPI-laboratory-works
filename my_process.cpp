@@ -27,30 +27,6 @@ public:
   }
 };
 
-// TODO: maybe remove this entirely
-class Logger {
-private:
-  static std::vector<std::string> logs;
-
-protected:
-  static void writeLog(std::string log, bool printToConsole) {
-    logs.push_back(log);
-    if (printToConsole) {
-      std::cout << log;
-    }
-  }
-
-public:
-  static std::vector<std::string> getLogs() { return logs; }
-  static std::string getStringLogs() {
-    std::string result = "";
-    for (std::string log : logs)
-      result += log + "\n";
-
-    return result;
-  }
-};
-
 class Process {
 private:
   std::chrono::steady_clock::time_point startTime, endTime;
@@ -504,8 +480,7 @@ private:
     void generateData(NetworkProcess *np, Packet &packet) {
       packet.data = rand() % 1000;
 
-      // Generating values while it's not process 0 or not the same as current
-      // process rank
+      // Generating values while it's not process 0 or not the same as current process rank
       do {
         packet.destination = rand() % np->totalProcesses;
       } while (packet.destination == 0 || packet.destination == np->rank);
@@ -543,7 +518,7 @@ public:
     srand(time(0) * rank); // initialize random seed
 
     if (this->rank == 0) {
-			this->startTimer();
+      this->startTimer();
       std::vector<Packet> packets;
       Router router;
       // Receiving packets from other processes
@@ -558,8 +533,8 @@ public:
 
       // Ending all processes by passing packet with destination == -1
       router.endAllProcesses(this);
-			this->endTimer();
-			this->output();
+      this->endTimer();
+      this->output();
     } else {
       Packet packet;
       Client client;
@@ -645,6 +620,7 @@ public:
     // min and max value for later generating A value if needed
     int min = 0;
     int max = 10;
+
     for (int i = 0; i < argc; i++) {
       std::string argument = argv[i];
       if (argument == "-N") {
@@ -686,9 +662,7 @@ public:
       std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ")"
                 << " result sum: " << sum << " [N: " << this->N << ", "
                 << "A: " << this->A << "]" << std::endl;
-    }
-
-    else
+    } else
       std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing";
 
     MPI_Finalize();
