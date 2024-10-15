@@ -460,8 +460,7 @@ public:
   }
 };
 
-// Можно сделать класс в классе (родительский и дочерний в классе NetworkProcess), у которых будут определены методы send и receive
-
+// mpiexec -n 6 main
 class NetworkProcess : public Process {
 private: 
   struct Packet {
@@ -469,12 +468,94 @@ private:
     int data;
     MPI_Status status;
   };
-  // Маршрутизатор и клиент
-  class Router {
+  // Router is process with rank 0
+  struct Router {
+    void receivePackets(NetworkProcess *np, std::vector<Packet> &packets) {
+      Packet packet;
 
+      // Receiving packets from other processes
+      for (int i = 1; i < np->totalProcesses; i++){
+        MPI_Recv(&packet, sizeof(Packet), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &packet.status);
+        packets.push_back(packet);
+        
+        std::cout 
+          << "Process 0 received packet from " << packet.status.MPI_SOURCE 
+          << " with destination " << packet.destination 
+          << " and data: " << packet.data 
+          << std::endl;
+      }
+    }
+    void sendPacket(NetworkProcess *np, Packet &packet) {
+      MPI_Send(&packet, sizeof(packet), MPI_BYTE, packet.destination, 0, MPI_COMM_WORLD);
+    }
+    void receiveConfirmation(NetworkProcess *np, Packet &packet) {
+      int confirmation;
+      MPI_Recv(&confirmation, 1, MPI_INT, packet.destination, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      std::cout 
+        << "Process 0 confirmed receiving by process " << packet.destination 
+        << " (source " << packet.status.MPI_SOURCE << ")"
+        << std::endl;
+    }
+
+    // Send confirmation report 
+    void sendConfirmation(NetworkProcess *np, Packet &packet) {
+      int confirmation = 1;
+      std::cout 
+        << "Process 0 sent confirmation to process " << packet.destination 
+        << " (from process " << packet.status.MPI_SOURCE << ")"
+        << std::endl;
+      MPI_Send(&confirmation, 1, MPI_INT, packet.destination, 0, MPI_COMM_WORLD);
+    }
+    void endAllProcesses(NetworkProcess *np) {
+      Packet packet;
+      for (int i = 1; i < np->totalProcesses; i++) {
+        packet.destination = -1;
+        std::cout << "Ending process " << i << std::endl;
+        MPI_Send(&packet, sizeof(Packet), MPI_BYTE, i, 0, MPI_COMM_WORLD);
+      }
+    }
   };
-  class Client {
-
+  // Client is processes with rank > 0
+  struct Client {
+    void generateData(NetworkProcess *np, Packet &packet) {
+      packet.data = rand() % 1000;
+      
+      // Generating values while it's not process 0 or not the same as current process rank
+      do {
+        packet.destination = rand() % np->totalProcesses;
+      } while (packet.destination == 0 || packet.destination == np->rank);
+    }
+    void sendPacket(NetworkProcess *np, Packet &packet) {
+      MPI_Send(&packet, sizeof(Packet), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+      std::cout 
+        << "Process " << np->rank 
+        << " sent packet to 0"
+        << " with destination " << packet.destination 
+        << " and data: " << packet.data 
+        << std::endl;
+    }
+    // receving packet with destination -1 means exit for process
+    int receivePacket(NetworkProcess *np, Packet &packet) {
+      MPI_Recv(&packet, sizeof(Packet), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      std::cout 
+        << "Process " << np->rank << " received packet from 0"
+        << " with destination " << packet.destination 
+        << " (source: " << packet.status.MPI_SOURCE << ")"
+        << " and data: " << packet.data 
+        << std::endl;
+      return packet.destination;
+    }
+    void sendConfirmation(NetworkProcess *np) {
+      int confirmation = 1;
+      MPI_Send(&confirmation, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+      std::cout << "Process " << np->rank << " sent confirmation to 0" << std::endl;
+    }
+    void receiveConfirmation(NetworkProcess *np) {
+      int confirmation;
+      MPI_Recv(&confirmation, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      std::cout << "Process " << np->rank << " received confirmation from 0" << std::endl;  
+    }
   };
 
   int getRandomDestination() {
@@ -486,97 +567,37 @@ public:
     srand(time(0) * rank); // initialize random seed
 
     if (this->rank == 0) {
-      Packet packet;
       std::vector<Packet> packets;
-
+      Router router;
       // Receiving packets from other processes
-      for (int i = 1; i < this->totalProcesses; i++){
-        MPI_Recv(&packet, sizeof(packet), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &packet.status);
-        packets.push_back(packet);
-        
-        std::cout 
-          << "Process 0 received packet from " << packet.status.MPI_SOURCE 
-          << " with destination " << packet.destination 
-          << " and data: " << packet.data 
-          << std::endl;
-      }
+      router.receivePackets(this, packets);
 
       // Sending packet to destination
-      for (Packet p : packets) {
-        MPI_Send(&p, sizeof(p), MPI_BYTE, p.destination, 0, MPI_COMM_WORLD);
-
-        // Receive confirmation report
-        int confirmation;
-        MPI_Recv(&confirmation, 1, MPI_INT, p.destination, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        std::cout 
-          << "Process 0 confirmed receiving by process " << p.destination 
-          << " (source ) " << p.status.MPI_SOURCE << ")"
-          << std::endl;
-        
-        // Send confirmation report 
-        confirmation = 1;
-        std::cout 
-          << "Process 0 sent confirmation to process " << p.destination 
-          << " (from process " << p.status.MPI_SOURCE << ")"
-          << std::endl;
-        MPI_Send(&confirmation, 1, MPI_INT, p.destination, 0, MPI_COMM_WORLD);
-
+      for (Packet packet : packets) {
+        router.sendPacket(this, packet);
+        router.receiveConfirmation(this, packet);
+        router.sendConfirmation(this, packet);  
       }
 
       // Ending all processes by passing packet with destination == -1
-      for (int i = 1; i < this->totalProcesses; i++) {
-        packet.destination = -1;
-        std::cout << "Ending process " << i << std::endl;
-        MPI_Send(&packet, sizeof(packet), MPI_BYTE, i, 0, MPI_COMM_WORLD);
-      }
+      router.endAllProcesses(this);
     }
     else {
-      // Generating values
       Packet packet;
-      packet.data = rand() % 1000;
-      
-      // Generating values while it's not process 0 or not the same as current process rank
-      do {
-        packet.destination = rand() % this->totalProcesses;
-      } while (packet.destination == 0 || packet.destination == this->rank);
-      MPI_Send(&packet, sizeof(packet), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+      Client client;
 
-      std::cout 
-        << "Process " << this->rank 
-        << " sent packet to 0"
-        << " with destination " << packet.destination 
-        << " and data: " << packet.data 
-        << std::endl;
-
+      // Generating values
+      client.generateData(this, packet);
+      client.sendPacket(this, packet);
       while (true) {
         // Receiving packet from process 0
-        MPI_Recv(&packet, sizeof(packet), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        // If received destionation == -1 then leave loop and end process
-        if (packet.destination == -1)
+        // If received destination == -1 then leave loop and end process
+        if (client.receivePacket(this, packet) == -1)
           break;
 
-        std::cout 
-          << "Process " << this->rank << " received packet from 0"
-          << " with destination " << packet.destination 
-          << " (source: " << packet.status.MPI_SOURCE << ")"
-          << " and data: " << packet.data 
-          << std::endl;
-
-        // Sending confirmation to process 0 (int value = 1)
-        {
-          int confirmation = 1;
-          MPI_Send(&confirmation, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-          std::cout << "Process " << this->rank << " sent confirmation to 0" << std::endl;
-        }
-        // Receiving confirmation from process 1 
-        // int confirmation;
-        // MPI_Recv(&confirmation, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        // std::cout << "Process " << this->rank << " received confirmation from 0" << std::endl;  
+        client.sendConfirmation(this);
+        client.receiveConfirmation(this);
       }
-
-      
     }
     
     MPI_Finalize();
