@@ -11,7 +11,10 @@ int main(int argc, char* argv[]) {
   // NetworkProcess *np = new NetworkProcess(argc, argv);
   // np->run();
 
-  Process *process = new NumbersProcess(argc, argv);
+  // Process *process = new NumbersProcess(argc, argv);
+  // process->run();
+
+  Process *process = new GroupProcess(argc, argv);
   process->run();
 }  
 

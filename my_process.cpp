@@ -464,6 +464,7 @@ public:
 // mpiexec -n 6 main
 class NetworkProcess : public Process {
 private: 
+  // Packet struct to send messages
   struct Packet {
     int destination;
     int data;
@@ -559,6 +560,7 @@ private:
     }
   };
 
+  // TODO: MAKE OUTPUT FOR THIS CLASS (OR MOVE IT TO PARENT CLASS)
   int getRandomDestination() {
     return rand() % totalProcesses;
   }
@@ -606,6 +608,8 @@ public:
 
 };
  
+
+// TODO: maybe change vector<int> to vector<Packet> in which each packet will contain (rank, value) where rank is sourceRank and value is generated number
 class NumbersProcess : public Process {
 private:
   void generateValues(std::vector<int> &values) {
@@ -621,6 +625,12 @@ private:
       values.push_back(this->rank * std::pow(10, i));
     }
   }
+  void printValues(std::vector<int> &values) {
+    for (int number : values) {
+      std::cout << number << " ";
+    }
+    std::cout << std::endl;
+  }
 public: 
   NumbersProcess(int argc, char *argv[]) : Process(argc, argv) {}
   void run() {
@@ -628,14 +638,9 @@ public:
 
     // generating values to send
     this->generateValuesFromRank(sendBuffer);
-    
-    // Выводим результаты
-    std::cout << "Process " << rank << " sending numbers: ";
-    for (int number : sendBuffer) {
-      std::cout << number << " ";
-    }
-    std::cout << std::endl;
 
+    std::cout << "Process " << rank << " sending numbers: ";
+    this->printValues(sendBuffer);
 
     // sending data
     MPI_Alltoall(
@@ -650,11 +655,76 @@ public:
 
     // Выводим результаты
     std::cout << "Process " << rank << " received numbers: ";
-    for (int number : recvBuffer) {
-      std::cout << number << " ";
-    }
-    std::cout << std::endl;
+    this->printValues(recvBuffer);
 
     MPI_Finalize();
   };
+};
+
+
+class GroupProcess: public Process {
+private:
+  bool N;
+  double A;
+protected:
+  int groupRank;
+  MPI_Comm comm;
+public:
+  GroupProcess(int argc, char *argv[]) : Process(argc, argv) {
+    srand(time(0) * this->rank);
+
+    bool isNIsPresented = false;
+    // min and max value for later generating A value if needed
+    int min = 0;
+    int max = 10;
+    for (int i = 0; i < argc; i++) {
+      std::string argument = argv[i];
+      if (argument == "-N") {
+        this->N = std::atoi(argv[i + 1]);
+        isNIsPresented = true;        
+      }
+      else if (argument == "--min") min = std::atoi(argv[i + 1]);
+      else if (argument == "--max") max = std::atoi(argv[i + 1]);
+    }
+    
+    if (!isNIsPresented) 
+      throw std::runtime_error("ERROR: N was not presented. Pass -N 'value' in the terminal");
+    if (min >= max) 
+      throw std::runtime_error("ERROR: min equal or more than max value");
+
+    // randomizing N value if it wasn't presented previously
+    if (!this->N) 
+      this->N = rand() % 2;
+    
+    // if N is true then generate value for A to sum it later in whole group
+    if (this->N) 
+      this->A = min + static_cast<double>(rand()) / RAND_MAX * (max - min);
+  }
+  void run() {
+    // splitting process
+    int color = this->N ? 1 : MPI_UNDEFINED;
+    MPI_Comm_split(MPI_COMM_WORLD, color, this->rank, &this->comm);
+
+    if (this->N) {
+      // getting new rank of the process
+      MPI_Comm_rank(this->comm, &this->groupRank);  
+      // waiting for other processes
+      MPI_Barrier(this->comm);                      
+
+      // reducing processes to count sum of all A's
+      double sum = 0;
+      MPI_Allreduce(&this->A, &sum, 1,  MPI_DOUBLE, MPI_SUM, this->comm);
+      std::cout 
+        << "Process " << this->rank 
+        << " (gRank: " << this->groupRank << ")"
+        << " result sum: " << sum
+        << " [N: " << this->N << ", " << "A: " << this->A << "]"
+        << std::endl;
+    }
+  
+    else
+      std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing";
+    
+    MPI_Finalize();
+  }
 };
