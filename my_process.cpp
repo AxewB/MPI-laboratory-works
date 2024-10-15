@@ -6,16 +6,47 @@
 #include "mpi.h"
 #include <vector> 
 
+#include <random>
+#include <iomanip>  // Для std::setprecision и std::fixed
+
+class Util {
+public:
+  static std::vector<float> generateRandomVector(int size, float lower_bound = 0, float upper_bound = 10) {
+    std::mt19937 gen(static_cast<unsigned int>(std::time(0)));
+    std::uniform_real_distribution<float> dist(lower_bound, upper_bound);
+
+    std::vector<float> randomVector;
+    randomVector.reserve(size);
+
+    for (int i = 0; i < size; ++i) {
+        randomVector.push_back(dist(gen));
+    }
+
+    return randomVector;
+  }
+};
+
+// TODO: maybe remove this entirely
 class Logger { 
 private:
-  std::vector<std::string> logs;
+  static std::vector<std::string> logs;
 protected:
-  void write(std::string log) {
-    this->logs.push_back(log);
+  static void writeLog(std::string log, bool printToConsole) {
+    logs.push_back(log);
+    if (printToConsole) {
+      std::cout << log;
+    }
   }
 public:
-  std::vector<std::string> getLogs() {
-    return this->logs;
+  static std::vector<std::string> getLogs() {
+    return logs;
+  }
+  static std::string getStringLogs() {
+    std::string result = "";
+    for (std::string log : logs) 
+      result += log + "\n";
+
+    return result;
   }
 };
 
@@ -23,6 +54,7 @@ class Process {
 private:
   std::chrono::steady_clock::time_point startTime, endTime;
   std::chrono::nanoseconds elapsedTime;
+  // FIXME: move output logic here
 protected:
   int totalProcesses = -1;
   int availableProcesses = -1;
@@ -112,12 +144,16 @@ public:
   }
 };
 
+// mpiexec -n 6 main --random --size 10
 class VectorProcess : public Process {
 private:
   std::vector<float> vectorA;
   std::vector<float> vectorB;
   int vectorSize = 0;
   float scalarSum = 0;
+  bool isRandom = false;
+
+  bool isOutput = false;
 
   std::vector<float> inputVector() {
     std::vector<float> new_vector;
@@ -129,11 +165,71 @@ private:
     return new_vector;
   }
 
-public:
-  VectorProcess(int argc, char *argv[]) : Process(argc, argv) { }
-  ~VectorProcess() {
-    // FIXME: maybe add here MPI_Finalize instead of run() method
+  void output() {
+    if (!this->isOutput) 
+      return;
+
+    std::ofstream outfile;
+    outfile.open("temp/lab-2-output.csv", std::ios::app);
+
+    if (!outfile.is_open()) {
+      std::cerr << "Error while opening file!" << std::endl;
+      return;
+    }
+    // outfile 
+    //   << "processes=" 
+    //   << this->getTotalProcesses() 
+    //   << " | elapsed_time=" 
+    //   << this->getElapsedTime().count() 
+    //   << " | vector_size=" 
+    //   << this->vectorSize
+    //   << "\n";
+    // Проверяем, существует ли уже заголовок
+    std::string line;
+    bool headerExists = false;
+
+    // Считываем первые строки файла, чтобы проверить наличие заголовка
+    std::ifstream infile("temp/lab-2-output.csv");
+    if (infile.good()) {
+        std::getline(infile, line);
+        if (line == "P,T,V") {
+            headerExists = true;
+        }
+    }
+
+    // Если заголовок отсутствует, записываем его
+    if (!headerExists) {
+        outfile << "P,T,V\n";
+    }
+    // Placing cursors in the end of the file
+    outfile.seekp(0, std::ios::end);
+    outfile 
+      << this->getTotalProcesses() 
+      << ", " 
+      << this->getElapsedTime().count() 
+      << ", " 
+      << this->vectorSize
+      << "\n";
+    outfile.close();
+
+    std::cout << "\nElapsed time: " << this->getElapsedTime().count();
   }
+public:
+  VectorProcess(int argc, char *argv[]) : Process(argc, argv) { 
+    for (int i = 1; i < argc; i++) {
+      std::string argument = argv[i];
+      if (argument == "--size") {
+        this->vectorSize = std::atoi(argv[i + 1]);
+      }
+      else if (argument == "--random") {
+        this->isRandom = true;
+      }
+      else if (argument == "--output") {
+        this->isOutput = true;
+      }
+    }
+  }
+  ~VectorProcess() {}
   
   std::vector<float> getVectorA() { return this->vectorA; }
 
@@ -142,27 +238,33 @@ public:
   int getVectorSize() { return vectorSize; }
 
   void init() {
-    while(vectorSize == 0 || this->vectorA.empty() || this->vectorB.empty()) {
-      try
-      {
-        std::cout << "Input vector size: ";
-        std::cin >> this->vectorSize;
+    if (this->isRandom) {
+      this->vectorA = Util::generateRandomVector(this->vectorSize);
+      this->vectorB = Util::generateRandomVector(this->vectorSize);
+    }
+    else {
+      while(this->vectorSize == 0 || this->vectorA.empty() || this->vectorB.empty()) {
+        try
+        {
+          std::cout << "Input vector size: ";
+          std::cin >> this->vectorSize;
 
-        std::cout << "Input vector A: \n";
-        this->vectorA = this->inputVector();
+          std::cout << "Input vector A: \n";
+          this->vectorA = this->inputVector();
 
-        std::cout << "Input vector B: \n";
-        this->vectorB = this->inputVector();
-        break;
-      }
-      catch(const std::exception& e)
-      {
-        // FIXME: find why this block doesn't work when input is wrong !!!
-        std::cerr << e.what() << '\n';
-        this->vectorSize;
-        this->vectorA.clear();
-        this->vectorB.clear();
-        continue;
+          std::cout << "Input vector B: \n";
+          this->vectorB = this->inputVector();
+          break;
+        }
+        catch(const std::exception& e)
+        {
+          // FIXME: find why this block doesn't work when input is wrong !!!
+          std::cerr << e.what() << '\n';
+          this->vectorSize;
+          this->vectorA.clear();
+          this->vectorB.clear();
+          continue;
+        }
       }
     }
   }
@@ -191,7 +293,7 @@ public:
     int size;
     MPI_Status status;
     MPI_Recv(&size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
-    std::cout << "\nPROCESS " << this->rank << " RECEIVING VECTOR WITH SIZE " << size;
+    // std::cout << "\nPROCESS " << this->rank << " RECEIVING VECTOR WITH SIZE " << size;
     return size;
   }
   // receive for CHILD process
@@ -204,16 +306,16 @@ public:
   }
 
   void send_vecs(int process_id, std::vector<float> vec1, std::vector<float> vec2) {
-    std::cout 
-        << "\nSENDING TO PROCESS #" 
-        << process_id
-        << "\n\tvector[0]: "
-        << this->vectorToString(vec1)
-        << "\n\tvector[1]: "
-        << this->vectorToString(vec2)
-        << "\n\tsize: " 
-        << vec1.size()
-        << std::endl;
+    // std::cout 
+    //     << "\nSENDING TO PROCESS #" 
+    //     << process_id
+    //     << "\n\tvector[0]: "
+    //     << this->vectorToString(vec1)
+    //     << "\n\tvector[1]: "
+    //     << this->vectorToString(vec2)
+    //     << "\n\tsize: " 
+    //     << vec1.size()
+    //     << std::endl;
 
     MPI_Send(vec1.data(), vec1.size(), MPI_FLOAT, process_id, 0, MPI_COMM_WORLD);
     MPI_Send(vec2.data(), vec2.size(), MPI_FLOAT, process_id, 0, MPI_COMM_WORLD);
@@ -230,10 +332,14 @@ public:
   void run() override {
     
     if (this->totalProcesses == 1) {
+      this->startTimer();
       std:: cout << this->toString();
       init();
-      std:: cout << this->toString();
-      std:: cout << "\n\nscalar: " << this->calculateScalar(this->vectorA, this->vectorB);
+      this->scalarSum = this->calculateScalar(this->vectorA, this->vectorB);
+      std:: cout << "\n\nCALCULATED SCALAR: " << this->scalarSum;
+
+      this->endTimer();
+      this->output();
     }
     else { 
       if (this->rank == 0) {
@@ -243,10 +349,13 @@ public:
         int new_v_size = this->vectorSize < this->availableProcesses ? 1 : this->vectorSize / this->availableProcesses;
         std::vector<int> process_queue;
 
+        // Starting timer after initialization
+        this->startTimer();
+
         for (int i = 0; i < this->availableProcesses; i ++ ) {
           int process_id = i + 1;
           if (this->vectorSize < process_id) {
-            std:: cout << "\nSENDING SIZE -1 TO PROCESS " << process_id << std::endl;
+            // std:: cout << "\nSENDING SIZE -1 TO PROCESS " << process_id << std::endl;
             this->send_v_size(process_id, -1);
             continue;
           }
@@ -259,7 +368,7 @@ public:
             v_index++;
           }
 
-          std::cout << "\nSENDING SIZE " << vec1.size() << " TO PROCESS " << process_id;
+          // std::cout << "\nSENDING SIZE " << vec1.size() << " TO PROCESS " << process_id;
           this->send_v_size(process_id, vec1.size());
           this->send_vecs(process_id, vec1, vec2);    
           process_queue.push_back(process_id);
@@ -279,38 +388,40 @@ public:
 
           this->scalarSum += this->calculateScalar(vec1, vec2);
         }
-        std::cout << "ITEMS LEFT: " << left_items << " | CALCULATED SCALAR: " << this->scalarSum << std::endl;
+        // std::cout << "ITEMS LEFT: " << left_items << " | CALCULATED SCALAR: " << this->scalarSum << std::endl;
 
-        std::cout << "\nPROCESSES IN QUEUE" << this->vectorToString(process_queue) << std::endl; 
+        // std::cout << "\nPROCESSES IN QUEUE" << this->vectorToString(process_queue) << std::endl; 
 
-        std::cout << "\nPROCESS 0 RECEIVING SCALARS\n";
+        // std::cout << "\nPROCESS 0 RECEIVING SCALARS\n";
         for (int process_id : process_queue) {
           float received_scalar = this->receive_scalar(process_id);
-          std::cout 
-            << "!!! PROCESS 0 RECEIVED SCALAR " 
-            << received_scalar 
-            << " FROM PROCESS " 
-            << process_id 
-            << std::endl;
+          // std::cout 
+          //   << "!!! PROCESS 0 RECEIVED SCALAR " 
+          //   << received_scalar 
+          //   << " FROM PROCESS " 
+          //   << process_id 
+          //   << std::endl;
           this->scalarSum += received_scalar;
         }
         std::cout << "\n\n\n\n RESULT SCALAR SUM: " << this->scalarSum;
+        this->endTimer();
+        this->output();
       }
       else {
         std::cout << this->toString();
         int size = this->receive_v_size();
-        std::cout << "\nPROCESS " << this->rank << " RECEIVED SIZE " << size;
+        // std::cout << "\nPROCESS " << this->rank << " RECEIVED SIZE " << size;
         
         if (size != -1) {
           std::vector<float> vec1 = this->receive_vec(size);
           std::vector<float> vec2 = this->receive_vec(size);
-          std::cout 
-            << "\nPROCESS " 
-            << this->rank 
-            << "\n\t RECEIVED VECTOR " 
-            << this->vectorToString(vec1) 
-            << "\n\t AND VECTOR " 
-            << this->vectorToString(vec2);
+          // std::cout 
+          //   << "\nPROCESS " 
+          //   << this->rank 
+          //   << "\n\t RECEIVED VECTOR " 
+          //   << this->vectorToString(vec1) 
+          //   << "\n\t AND VECTOR " 
+          //   << this->vectorToString(vec2);
 
           float scalar = this->calculateScalar(vec1, vec2);
           this->send_scalar(scalar);
@@ -318,9 +429,7 @@ public:
       }
     }
     
-
     MPI_Finalize();
-
   }
 
   template <typename T>
@@ -332,9 +441,9 @@ public:
     return "[" + result + "]";
   }
 
-  std::string toString() {
+  std::string toString(bool printVector = false) {
     // if object have vectors then convert them into strings
-    if (!vectorA.empty() && !vectorB.empty()) {
+    if (!vectorA.empty() && !vectorB.empty() && printVector) {
       std::string *vectors = nullptr;
       vectors = new std::string[2]{"", ""};
 
@@ -342,8 +451,8 @@ public:
       vectors[1] = this->vectorToString(this->vectorB);
 
       return  "\nHello, i'm process " + std::to_string(this->rank) + 
-              "\nVectorA: " + vectors[0] + 
-              "\nVectorB: " + vectors[1] + "\n";
+              "\n\tVectorA: " + vectors[0] + 
+              "\n\tVectorB: " + vectors[1] + "\n";
     }
 
     // if object doesn't have any vectors    
@@ -351,4 +460,127 @@ public:
   }
 };
 
+// Можно сделать класс в классе (родительский и дочерний в классе NetworkProcess), у которых будут определены методы send и receive
+
+class NetworkProcess : public Process {
+private: 
+  struct Packet {
+    int destination;
+    int data;
+    MPI_Status status;
+  };
+  // Маршрутизатор и клиент
+  class Router {
+
+  };
+  class Client {
+
+  };
+
+  int getRandomDestination() {
+    return rand() % totalProcesses;
+  }
+public:
+  NetworkProcess(int argc, char *argv[]) : Process(argc, argv) {}
+  void run() {
+    srand(time(0) * rank); // initialize random seed
+
+    if (this->rank == 0) {
+      Packet packet;
+      std::vector<Packet> packets;
+
+      // Receiving packets from other processes
+      for (int i = 1; i < this->totalProcesses; i++){
+        MPI_Recv(&packet, sizeof(packet), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &packet.status);
+        packets.push_back(packet);
+        
+        std::cout 
+          << "Process 0 received packet from " << packet.status.MPI_SOURCE 
+          << " with destination " << packet.destination 
+          << " and data: " << packet.data 
+          << std::endl;
+      }
+
+      // Sending packet to destination
+      for (Packet p : packets) {
+        MPI_Send(&p, sizeof(p), MPI_BYTE, p.destination, 0, MPI_COMM_WORLD);
+
+        // Receive confirmation report
+        int confirmation;
+        MPI_Recv(&confirmation, 1, MPI_INT, p.destination, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        std::cout 
+          << "Process 0 confirmed receiving by process " << p.destination 
+          << " (source ) " << p.status.MPI_SOURCE << ")"
+          << std::endl;
+        
+        // Send confirmation report 
+        confirmation = 1;
+        std::cout 
+          << "Process 0 sent confirmation to process " << p.destination 
+          << " (from process " << p.status.MPI_SOURCE << ")"
+          << std::endl;
+        MPI_Send(&confirmation, 1, MPI_INT, p.destination, 0, MPI_COMM_WORLD);
+
+      }
+
+      // Ending all processes by passing packet with destination == -1
+      for (int i = 1; i < this->totalProcesses; i++) {
+        packet.destination = -1;
+        std::cout << "Ending process " << i << std::endl;
+        MPI_Send(&packet, sizeof(packet), MPI_BYTE, i, 0, MPI_COMM_WORLD);
+      }
+    }
+    else {
+      // Generating values
+      Packet packet;
+      packet.data = rand() % 1000;
+      
+      // Generating values while it's not process 0 or not the same as current process rank
+      do {
+        packet.destination = rand() % this->totalProcesses;
+      } while (packet.destination == 0 || packet.destination == this->rank);
+      MPI_Send(&packet, sizeof(packet), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+
+      std::cout 
+        << "Process " << this->rank 
+        << " sent packet to 0"
+        << " with destination " << packet.destination 
+        << " and data: " << packet.data 
+        << std::endl;
+
+      while (true) {
+        // Receiving packet from process 0
+        MPI_Recv(&packet, sizeof(packet), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        // If received destionation == -1 then leave loop and end process
+        if (packet.destination == -1)
+          break;
+
+        std::cout 
+          << "Process " << this->rank << " received packet from 0"
+          << " with destination " << packet.destination 
+          << " (source: " << packet.status.MPI_SOURCE << ")"
+          << " and data: " << packet.data 
+          << std::endl;
+
+        // Sending confirmation to process 0 (int value = 1)
+        {
+          int confirmation = 1;
+          MPI_Send(&confirmation, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+          std::cout << "Process " << this->rank << " sent confirmation to 0" << std::endl;
+        }
+        // Receiving confirmation from process 1 
+        // int confirmation;
+        // MPI_Recv(&confirmation, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        // std::cout << "Process " << this->rank << " received confirmation from 0" << std::endl;  
+      }
+
+      
+    }
+    
+    MPI_Finalize();
+  }
+
+};
  
