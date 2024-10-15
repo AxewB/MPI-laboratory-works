@@ -5,3 +5,4 @@ SDK
 .vs
 *.exe
 temp
+output
