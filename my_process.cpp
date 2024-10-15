@@ -8,6 +8,7 @@
 
 #include <random>
 #include <iomanip>  // Для std::setprecision и std::fixed
+#include <algorithm> // Для std::sort
 
 class Util {
 public:
@@ -605,3 +606,55 @@ public:
 
 };
  
+class NumbersProcess : public Process {
+private:
+  void generateValues(std::vector<int> &values) {
+    srand(time(0) * this->rank);
+    for (int i = 0; i < this->totalProcesses; i++) {
+      int value = rand();
+      values.push_back(value);
+    }
+  }
+  void generateValuesFromRank(std::vector<int> &values) {
+    srand(time(0) * this->rank);
+    for (int i = 0; i < this->totalProcesses; i++) {
+      values.push_back(this->rank * std::pow(10, i));
+    }
+  }
+public: 
+  NumbersProcess(int argc, char *argv[]) : Process(argc, argv) {}
+  void run() {
+    std::vector<int> sendBuffer, recvBuffer(this->totalProcesses);
+
+    // generating values to send
+    this->generateValuesFromRank(sendBuffer);
+    
+    // Выводим результаты
+    std::cout << "Process " << rank << " sending numbers: ";
+    for (int number : sendBuffer) {
+      std::cout << number << " ";
+    }
+    std::cout << std::endl;
+
+
+    // sending data
+    MPI_Alltoall(
+      sendBuffer.data(), 
+      1, 
+      MPI_INT, 
+      recvBuffer.data(), 
+      1, 
+      MPI_INT, 
+      MPI_COMM_WORLD
+    );
+
+    // Выводим результаты
+    std::cout << "Process " << rank << " received numbers: ";
+    for (int number : recvBuffer) {
+      std::cout << number << " ";
+    }
+    std::cout << std::endl;
+
+    MPI_Finalize();
+  };
+};
