@@ -1,4 +1,3 @@
-#include <algorithm> // Для std::sort
 #include <chrono>
 #include <fstream>
 #include <iomanip> // Для std::setprecision и std::fixed
@@ -113,6 +112,7 @@ public:
   virtual void run() = 0;
 };
 
+// LR1
 class SimpleProcess : public Process {
 private:
   bool isRankAscending = false;
@@ -163,6 +163,7 @@ public:
   }
 };
 
+// LR2
 // mpiexec -n 6 main --random --size 10
 class VectorProcess : public Process {
 private:
@@ -425,14 +426,15 @@ public:
   }
 };
 
+// LR3
 // mpiexec -n 6 main
 class NetworkProcess : public Process {
 private:
   // Packet struct to send messages
   struct Packet {
-    int destination;
-    int data;
-    MPI_Status status;
+    int        destination;
+    int        data       ;
+    MPI_Status status     ;
   };
   // Router is process with rank 0
   struct Router {
@@ -557,6 +559,7 @@ public:
   }
 };
 
+// LR4
 // TODO: maybe change vector<int> to vector<Packet> in which each packet will
 // contain (rank, value) where rank is sourceRank and value is generated number
 class NumbersProcess : public Process {
@@ -603,6 +606,8 @@ public:
   };
 };
 
+
+// LR5
 class GroupProcess : public Process {
 private:
   bool N;
@@ -646,7 +651,7 @@ public:
       this->A = min + static_cast<double>(rand()) / RAND_MAX * (max - min);
   }
   void run() {
-    // splitting process
+    // splitting process into different groups
     int color = this->N ? 1 : MPI_UNDEFINED;
     MPI_Comm_split(MPI_COMM_WORLD, color, this->rank, &this->comm);
 
@@ -656,7 +661,7 @@ public:
       // waiting for other processes
       MPI_Barrier(this->comm);
 
-      // reducing processes to count sum of all A's
+      // calling MPI_Allreduce to count sum of A's for processes with N == true
       double sum = 0;
       MPI_Allreduce(&this->A, &sum, 1, MPI_DOUBLE, MPI_SUM, this->comm);
       std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ")"
@@ -667,4 +672,24 @@ public:
 
     MPI_Finalize();
   }
+};
+
+// LR6
+class TopologyProcess: public Process {
+public: 
+  TopologyProcess(int argc, char *argv[]): Process(argc, argv) {}
+  void run() {
+    throw std::runtime_error("This class is not implemented yet");
+  }
+};
+
+// LR7
+class MatrixProcess: public Process {
+public: 
+  MatrixProcess(int argc, char *argv[]): Process(argc, argv) {}
+
+  void run() {
+    throw std::runtime_error("This class is not implemented yet");
+  }
+
 };
