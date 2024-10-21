@@ -30,26 +30,34 @@ class Process {
 private:
   std::chrono::steady_clock::time_point startTime, endTime;
   std::chrono::nanoseconds elapsedTime;
+
+  double startTimeMPI, endTimeMPI, elapsedTimeMPI;
   bool isOutput = false;
-  // FIXME: move output logic here
+
 protected:
   int totalProcesses = -1;
   int availableProcesses = -1;
   int rank = -1;
-  void startTimer() { this->startTime = std::chrono::steady_clock::now(); }
+  void startTimer() {
+    this->startTime = std::chrono::steady_clock::now();
+    this->startTimeMPI = MPI_Wtime();
+  }
   void endTimer() {
     this->endTime = std::chrono::steady_clock::now();
     this->elapsedTime = std::chrono::duration_cast<std::chrono::nanoseconds>(this->endTime - this->startTime);
+    this->endTimeMPI = MPI_Wtime();
+    this->elapsedTimeMPI = this->endTimeMPI - this->startTimeMPI;
   }
   void output(std::string fileName = "output.csv",
               std::map<std::string, std::string> additionalValues = std::map<std::string, std::string>()) {
     if (!this->isOutput)
       return;
+    std::cout << "MPI TIME: " << this->startTimeMPI << " | " << this->endTimeMPI << " | " << this->elapsedTimeMPI;
 
     std::string outputPath = "output/" + fileName;
     std::ofstream outfile;
     std::string header = "P,T";
-    std::string data = std::to_string(this->rank) + "," + std::to_string(this->elapsedTime.count());
+    std::string data = std::to_string(this->totalProcesses) + "," + std::to_string(this->elapsedTimeMPI);
 
     // Opening file
     outfile.open(outputPath, std::ios::app);
@@ -65,6 +73,7 @@ protected:
       header += "," + pair.first;
       data += "," + pair.second;
     }
+
     // Check if header exists
     std::string line;
     bool headerExists = false;
@@ -432,9 +441,9 @@ class NetworkProcess : public Process {
 private:
   // Packet struct to send messages
   struct Packet {
-    int        destination;
-    int        data       ;
-    MPI_Status status     ;
+    int destination;
+    int data;
+    MPI_Status status;
   };
   // Router is process with rank 0
   struct Router {
@@ -536,7 +545,7 @@ public:
       // Ending all processes by passing packet with destination == -1
       router.endAllProcesses(this);
       this->endTimer();
-      this->output();
+      this->output("lab-3.output.csv");
     } else {
       Packet packet;
       Client client;
@@ -588,9 +597,11 @@ public:
   NumbersProcess(int argc, char *argv[]) : Process(argc, argv) {}
   void run() {
     std::vector<int> sendBuffer, recvBuffer(this->totalProcesses);
-
     // generating values to send
     this->generateValuesFromRank(sendBuffer);
+
+    // starting timer after numbers initialization
+    this->startTimer();
 
     std::cout << "Process " << rank << " sending numbers: ";
     this->printValues(sendBuffer);
@@ -602,10 +613,26 @@ public:
     std::cout << "Process " << rank << " received numbers: ";
     this->printValues(recvBuffer);
 
+    this->endTimer();
+
+    // Output one by one, otherwise this will cause errors while pushing strings into one file
+    if (this->rank == 0) {
+      this->output();
+      int confirmationOutput = 1;
+      MPI_Send(&confirmationOutput, 1, MPI_INT, this->rank + 1, 0, MPI_COMM_WORLD);
+    } else {
+      int confirmationOutput = 0;
+      MPI_Recv(&confirmationOutput, 1, MPI_INT, this->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      if (confirmationOutput == 1) {
+        this->output("lab-4.output.csv");
+      }
+      if (this->rank != this->totalProcesses - 1) {
+        MPI_Send(&confirmationOutput, 1, MPI_INT, this->rank + 1, 0, MPI_COMM_WORLD);
+      }
+    }
     MPI_Finalize();
   };
 };
-
 
 // LR5
 class GroupProcess : public Process {
@@ -675,21 +702,16 @@ public:
 };
 
 // LR6
-class TopologyProcess: public Process {
-public: 
-  TopologyProcess(int argc, char *argv[]): Process(argc, argv) {}
-  void run() {
-    throw std::runtime_error("This class is not implemented yet");
-  }
+class TopologyProcess : public Process {
+public:
+  TopologyProcess(int argc, char *argv[]) : Process(argc, argv) {}
+  void run() { throw std::runtime_error("This class is not implemented yet"); }
 };
 
 // LR7
-class MatrixProcess: public Process {
-public: 
-  MatrixProcess(int argc, char *argv[]): Process(argc, argv) {}
+class MatrixProcess : public Process {
+public:
+  MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {}
 
-  void run() {
-    throw std::runtime_error("This class is not implemented yet");
-  }
-
+  void run() { throw std::runtime_error("This class is not implemented yet"); }
 };
