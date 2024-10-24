@@ -1,4 +1,3 @@
-#include <chrono>
 #include <fstream>
 #include <iomanip> // Для std::setprecision и std::fixed
 #include <iostream>
@@ -28,10 +27,7 @@ public:
 
 class Process {
 private:
-  std::chrono::steady_clock::time_point startTime, endTime;
-  std::chrono::nanoseconds elapsedTime;
-
-  double startTimeMPI, endTimeMPI, elapsedTimeMPI;
+  double startTime, endTime, elapsedTime;
   bool isOutput = false;
 
 protected:
@@ -39,25 +35,21 @@ protected:
   int availableProcesses = -1;
   int rank = -1;
   void startTimer() {
-    this->startTime = std::chrono::steady_clock::now();
-    this->startTimeMPI = MPI_Wtime();
+    this->startTime = MPI_Wtime();
   }
   void endTimer() {
-    this->endTime = std::chrono::steady_clock::now();
-    this->elapsedTime = std::chrono::duration_cast<std::chrono::nanoseconds>(this->endTime - this->startTime);
-    this->endTimeMPI = MPI_Wtime();
-    this->elapsedTimeMPI = this->endTimeMPI - this->startTimeMPI;
+    this->endTime = MPI_Wtime();
+    this->elapsedTime = this->endTime - this->startTime;
   }
   void output(std::string fileName = "output.csv",
               std::map<std::string, std::string> additionalValues = std::map<std::string, std::string>()) {
     if (!this->isOutput)
       return;
-    std::cout << "MPI TIME: " << this->startTimeMPI << " | " << this->endTimeMPI << " | " << this->elapsedTimeMPI;
 
     std::string outputPath = "output/" + fileName;
     std::ofstream outfile;
     std::string header = "P,T";
-    std::string data = std::to_string(this->totalProcesses) + "," + std::to_string(this->elapsedTimeMPI);
+    std::string data = std::to_string(this->totalProcesses) + "," + std::to_string(this->elapsedTime);
 
     // Opening file
     outfile.open(outputPath, std::ios::app);
@@ -96,7 +88,7 @@ protected:
     outfile << data << "\n";
     outfile.close();
 
-    std::cout << "\nElapsed time: " << this->getElapsedTime().count();
+    std::cout << "\nElapsed time: " << this->getElapsedTime();
   }
 
 public:
@@ -114,9 +106,9 @@ public:
     }
   }
   int getTotalProcesses() { return totalProcesses; }
-  std::chrono::steady_clock::time_point getStartTime() { return this->startTime; }
-  std::chrono::steady_clock::time_point getEndTime() { return this->endTime; }
-  std::chrono::nanoseconds getElapsedTime() { return this->elapsedTime; }
+  double getStartTime() { return this->startTime; }
+  double getEndTime() { return this->endTime; }
+  double getElapsedTime() { return this->elapsedTime; }
 
   virtual void run() = 0;
 };
@@ -571,7 +563,7 @@ public:
 // LR4
 // TODO: maybe change vector<int> to vector<Packet> in which each packet will
 // contain (rank, value) where rank is sourceRank and value is generated number
-class NumbersProcess : public Process {
+class CollectiveProcess : public Process {
 private:
   void generateValues(std::vector<int> &values) {
     srand(time(0) * this->rank);
@@ -594,11 +586,11 @@ private:
   }
 
 public:
-  NumbersProcess(int argc, char *argv[]) : Process(argc, argv) {}
+  CollectiveProcess(int argc, char *argv[]) : Process(argc, argv) {}
   void run() {
     std::vector<int> sendBuffer, recvBuffer(this->totalProcesses);
     // generating values to send
-    this->generateValuesFromRank(sendBuffer);
+    this->generateValues(sendBuffer);
 
     // starting timer after numbers initialization
     this->startTimer();
@@ -678,6 +670,7 @@ public:
       this->A = min + static_cast<double>(rand()) / RAND_MAX * (max - min);
   }
   void run() {
+    this->startTimer();
     // splitting process into different groups
     int color = this->N ? 1 : MPI_UNDEFINED;
     MPI_Comm_split(MPI_COMM_WORLD, color, this->rank, &this->comm);
@@ -696,7 +689,8 @@ public:
                 << "A: " << this->A << "]" << std::endl;
     } else
       std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing";
-
+    this->endTimer();
+    this->output("lab-5.output.csv");
     MPI_Finalize();
   }
 };
