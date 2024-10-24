@@ -3,13 +3,17 @@
 int main(int argc, char *argv[]) {
   Process *process = nullptr;
   for (int i = 0; i < argc; i++) {
-    if (argv[i] == "--lab") {
-      if (argv[i + 1] == "1") process = new SimpleProcess(argc, argv);
-      if (argv[i + 1] == "2") process = new VectorProcess(argc, argv);
-      if (argv[i + 1] == "3") process = new NetworkProcess(argc, argv);
-      if (argv[i + 1] == "4") process = new NumbersProcess(argc, argv);
-      if (argv[i + 1] == "5") process = new TopologyProcess(argc, argv);
-      if (argv[i + 1] == "6") process = new MatrixProcess(argc, argv);
+    std::string argument = argv[i];
+    if (argument == "--lab") {
+      std::string labNumber = argv[i + 1];
+
+      if (labNumber == "1") process = new SimpleProcess(argc, argv);
+      if (labNumber == "2") process = new VectorProcess(argc, argv);
+      if (labNumber == "3") process = new NetworkProcess(argc, argv);
+      if (labNumber == "4") process = new CollectiveProcess(argc, argv);
+      if (labNumber == "5") process = new GroupProcess(argc, argv);
+      if (labNumber == "6") process = new TopologyProcess(argc, argv);
+      if (labNumber == "7") process = new MatrixProcess(argc, argv);
     }
   }
 
