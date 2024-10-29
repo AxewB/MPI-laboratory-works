@@ -5,7 +5,6 @@
 #include <random>
 #include <string>
 #include <vector>
-
 #include "mpi.h"
 
 class Util {
@@ -87,8 +86,9 @@ protected:
     outfile.seekp(0, std::ios::end);
     outfile << data << "\n";
     outfile.close();
-
-    std::cout << "\nElapsed time: " << this->getElapsedTime();
+  }
+  void printElapsedTime() {
+    std::cout << "\nElapsed time [rank " << this->rank << " ]: " << this->getElapsedTime();
   }
 
 public:
@@ -305,6 +305,7 @@ public:
 
       this->endTimer();
       this->output("lab-2.output.csv", std::map<std::string, std::string>{{"V", std::to_string(this->vectorSize)}});
+      this->printElapsedTime();
     } else {
       if (this->rank == 0) {
         init();
@@ -376,6 +377,7 @@ public:
         this->endTimer();
         std::cout << "vector size" << this->vectorSize << std::endl;
         this->output("lab-2.output.csv", std::map<std::string, std::string>{{"V", std::to_string(this->vectorSize)}});
+        this->printElapsedTime();
       } else {
         std::cout << this->toString();
         int size = this->receive_v_size();
@@ -538,6 +540,7 @@ public:
       router.endAllProcesses(this);
       this->endTimer();
       this->output("lab-3.output.csv");
+      this->printElapsedTime();
     } else {
       Packet packet;
       Client client;
@@ -609,7 +612,8 @@ public:
 
     // Output one by one, otherwise this will cause errors while pushing strings into one file
     if (this->rank == 0) {
-      this->output();
+      this->output("lab-4.output.csv");
+      this->printElapsedTime();
       int confirmationOutput = 1;
       MPI_Send(&confirmationOutput, 1, MPI_INT, this->rank + 1, 0, MPI_COMM_WORLD);
     } else {
@@ -617,6 +621,7 @@ public:
       MPI_Recv(&confirmationOutput, 1, MPI_INT, this->rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       if (confirmationOutput == 1) {
         this->output("lab-4.output.csv");
+        this->printElapsedTime();
       }
       if (this->rank != this->totalProcesses - 1) {
         MPI_Send(&confirmationOutput, 1, MPI_INT, this->rank + 1, 0, MPI_COMM_WORLD);
@@ -633,7 +638,9 @@ private:
   double A;
 
 protected:
+  int group;
   int groupRank;
+  int groupSize;
   MPI_Comm comm;
 
 public:
@@ -662,24 +669,31 @@ public:
       throw std::runtime_error("ERROR: min equal or more than max value");
 
     // randomizing N value if it wasn't presented previously
-    if (!this->N)
+    if (this->N != 1)
       this->N = rand() % 2;
 
     // if N is true then generate value for A to sum it later in whole group
-    if (this->N)
+    if (this->N){
       this->A = min + static_cast<double>(rand()) / RAND_MAX * (max - min);
+      this->group = 1;
+    } else {
+      this->group = MPI_UNDEFINED;
+    }
   }
+  
   void run() {
-    this->startTimer();
     // splitting process into different groups
-    int color = this->N ? 1 : MPI_UNDEFINED;
-    MPI_Comm_split(MPI_COMM_WORLD, color, this->rank, &this->comm);
-
+    MPI_Comm_split(MPI_COMM_WORLD, this->group, this->rank, &this->comm);
+    
+    // starting timer
+    this->startTimer();
     if (this->N) {
       // getting new rank of the process
       MPI_Comm_rank(this->comm, &this->groupRank);
       // waiting for other processes
       MPI_Barrier(this->comm);
+      // getting group size 
+      MPI_Comm_size(this->comm, &this->groupSize);
 
       // calling MPI_Allreduce to count sum of A's for processes with N == true
       double sum = 0;
@@ -687,10 +701,27 @@ public:
       std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ")"
                 << " result sum: " << sum << " [N: " << this->N << ", "
                 << "A: " << this->A << "]" << std::endl;
-    } else
+    } else {
       std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing";
+    }
+    // ending timer
     this->endTimer();
-    this->output("lab-5.output.csv");
+
+    // calculating mean time (actual mean will count process 0 later) 
+    double elapsed_time = this->getElapsedTime();   
+    double mean_time;
+    // reducing time to process 0 of the group (group MPI_UNDEFINED not counting)
+    if (this->N){
+      std::cout << "\nelapsed time" << elapsed_time << " | rank: " << this->rank << " | groupRank: " << this->groupRank;
+      MPI_Reduce(&elapsed_time, &mean_time, 1, MPI_DOUBLE, MPI_SUM, 0, this->comm);
+    }
+    // process with rank 0 will calculate mean time and put it in file
+    if (this->groupRank == 0) {
+      // calculating actual mean time
+      mean_time = mean_time / this->groupSize;
+      this->output("lab-5.output.csv");
+      std::cout << "\nTotal elapsed time: " << mean_time;
+    }
     MPI_Finalize();
   }
 };
