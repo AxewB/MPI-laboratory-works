@@ -655,7 +655,9 @@ public:
     for (int i = 0; i < argc; i++) {
       std::string argument = argv[i];
       if (argument == "-N") {
-        this->N = std::atoi(argv[i + 1]);
+        if (this->rank == std::atoi(argv[i + 1])){
+          this->N = 1;
+        }
         isNIsPresented = true;
       } else if (argument == "--min")
         min = std::atoi(argv[i + 1]);
@@ -702,7 +704,7 @@ public:
                 << " result sum: " << sum << " [N: " << this->N << ", "
                 << "A: " << this->A << "]" << std::endl;
     } else {
-      std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing";
+      std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing [N = " << this->N << "]";
     }
     // ending timer
     this->endTimer();
@@ -712,7 +714,6 @@ public:
     double mean_time;
     // reducing time to process 0 of the group (group MPI_UNDEFINED not counting)
     if (this->N){
-      std::cout << "\nelapsed time" << elapsed_time << " | rank: " << this->rank << " | groupRank: " << this->groupRank;
       MPI_Reduce(&elapsed_time, &mean_time, 1, MPI_DOUBLE, MPI_SUM, 0, this->comm);
     }
     // process with rank 0 will calculate mean time and put it in file
