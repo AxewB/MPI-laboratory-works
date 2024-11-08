@@ -22,6 +22,9 @@ public:
 
     return randomVector;
   }
+  static double generateDoubleValue(double min = 0, double max = 100) {
+    return min + static_cast<double>(rand()) / RAND_MAX * (max - min);
+  }
 };
 
 class Process {
@@ -671,12 +674,12 @@ public:
       throw std::runtime_error("ERROR: min equal or more than max value");
 
     // randomizing N value if it wasn't presented previously
-    if (this->N != 1)
+    if (this->N != 1){
       this->N = rand() % 2;
-
+    }
     // if N is true then generate value for A to sum it later in whole group
     if (this->N){
-      this->A = min + static_cast<double>(rand()) / RAND_MAX * (max - min);
+      this->A = Util::generateDoubleValue(min, max);
       this->group = 1;
     } else {
       this->group = MPI_UNDEFINED;
@@ -720,24 +723,88 @@ public:
     if (this->groupRank == 0) {
       // calculating actual mean time
       mean_time = mean_time / this->groupSize;
-      this->output("lab-5.output.csv");
+
+      this->output("lab-5.output.csv", {{"mean_time", std::to_string(mean_time)}});
       std::cout << "\nTotal elapsed time: " << mean_time;
     }
+    
     MPI_Finalize();
   }
 };
 
 // LR6
+// FIXME: сделать GroupProcess как родителя. Пока что это делать было впадлу
 class TopologyProcess : public Process {
+private:
+  double A; // value to sum
+protected:
+  MPI_Comm comm, subComm;
+  int commRank, commSize, cartCoords[3];
+  int subCommRank, subCommSize;
+  // Topology parameters
+  int dims[3] {2, 2, -1};        
+  int periods[3] {true, true, true};
+  bool reorder = false;    
+            
 public:
-  TopologyProcess(int argc, char *argv[]) : Process(argc, argv) {}
-  void run() { throw std::runtime_error("This class is not implemented yet"); }
+  TopologyProcess(int argc, char *argv[]) : Process(argc, argv) {
+    // If total processes not 8 or 12 then throw exception
+    if (this->totalProcesses != 8 && this->totalProcesses != 12){
+      throw std::runtime_error("ERROR: Wrong number of processes. It can be ONLY 8 or 12.");
+      MPI_Finalize();
+    }
+
+    // Set third dimension size
+    this->dims[2] = this->totalProcesses / 4;
+
+    // Creating 3D topology
+    MPI_Dims_create(this->totalProcesses, 3, this->dims);
+    int cartErr = MPI_Cart_create(MPI_COMM_WORLD, 3, this->dims, this->periods, this->reorder, &this->comm);
+    if (cartErr != MPI_SUCCESS) {
+      throw std::runtime_error("ERROR: MPI_Cart_create failed.");
+    }
+
+    // rank and coords of process
+    MPI_Comm_rank(this->comm, &this->commRank);
+    MPI_Cart_coords(this->comm, this->commRank, 3, this->cartCoords);
+    
+    // Generating 'A' value
+    srand(time(0) * rank * rank);
+    this->A = Util::generateDoubleValue();
+
+    int remain_dims[3] {1, 1, 0};
+    MPI_Cart_sub(this->comm, remain_dims, &this->subComm);
+
+    // Subgroup rank and size    
+    MPI_Comm_rank(this->subComm, &this->subCommRank);
+    MPI_Comm_size(this->subComm, &this->subCommSize);
+  }
+  void run() { 
+    // Print position in 3D grid 
+    printf("[Process %d] I am located at (%d, %d, %d) with value A = %f.\n", this->commRank, this->cartCoords[0],this->cartCoords[1], this->cartCoords[2], this->A);
+
+    double subSum = 0.0;
+    MPI_Allreduce(&this->A, &subSum, 1, MPI_DOUBLE, MPI_SUM, this->subComm);
+
+    printf("[Subgroup %d, process %d] Sum of values in matrix: %f\n", this->cartCoords[2], this->subCommRank, subSum);
+
+    MPI_Finalize();
+  }
 };
 
 // LR7
 class MatrixProcess : public Process {
+private: 
+  std::vector<double> matrixA, matrixB, matrixC;
+  struct MainProcess {
+    
+  };
+  struct ChildProcess { 
+
+  };
+  
 public:
   MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {}
-
+  
   void run() { throw std::runtime_error("This class is not implemented yet"); }
 };
