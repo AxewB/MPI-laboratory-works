@@ -1,8 +1,8 @@
 build
-MSMPI
-SDK
+MSMPI/*
+SDK/*
 .vscode
 .vs
 *.exe
 temp
-output
+output/*
