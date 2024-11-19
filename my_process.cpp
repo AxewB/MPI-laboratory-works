@@ -1,3 +1,4 @@
+#include "mpi.h"
 #include <fstream>
 #include <iomanip> // Для std::setprecision и std::fixed
 #include <iostream>
@@ -5,7 +6,6 @@
 #include <random>
 #include <string>
 #include <vector>
-#include "mpi.h"
 
 class Util {
 public:
@@ -25,6 +25,35 @@ public:
   static double generateDoubleValue(double min = 0, double max = 100) {
     return min + static_cast<double>(rand()) / RAND_MAX * (max - min);
   }
+
+  static std::vector<std::vector<double>> generateRandomMatrix(int size) {
+    std::vector<std::vector<double>> resultMatrix(size, std::vector<double>(size));
+    for (int i = 0; i < size; i++) {
+      for (int j = 0; j < size; j++) {
+        resultMatrix[i][j] = rand() % 10;
+      }
+    }
+    return resultMatrix;
+  }
+  static std::vector<std::vector<double>> generateLinearMatrix(int size) {
+    std::vector<std::vector<double>> resultMatrix(size, std::vector<double>(size));
+    double newValue = 1;
+    for (int i = 0; i < size; i++) {
+      for (int j = 0; j < size; j++) {
+        resultMatrix[i][j] = newValue;
+        newValue++;
+      }
+    }
+    return resultMatrix;
+  }
+  static void printMatrix(std::vector<std::vector<int>> &matrix) {
+    for (const auto &row : matrix) {
+      for (int value : row) {
+        std::cout << value << " ";
+      }
+      std::cout << "\n";
+    }
+  }
 };
 
 class Process {
@@ -36,9 +65,7 @@ protected:
   int totalProcesses = -1;
   int availableProcesses = -1;
   int rank = -1;
-  void startTimer() {
-    this->startTime = MPI_Wtime();
-  }
+  void startTimer() { this->startTime = MPI_Wtime(); }
   void endTimer() {
     this->endTime = MPI_Wtime();
     this->elapsedTime = this->endTime - this->startTime;
@@ -91,7 +118,19 @@ protected:
     outfile.close();
   }
   void printElapsedTime() {
-    std::cout << "\nElapsed time [rank " << this->rank << " ]: " << this->getElapsedTime();
+    std::cout << "\n[Process " << this->rank << "] " << "Elapsed time " << this->getElapsedTime();
+  }
+  double calculateMeanElapsedTime(MPI_Comm comm) {
+    // calculating mean time (actual mean will count process 0 later)
+    int size = 0;
+    double elapsed_time = this->getElapsedTime();
+    double mean_time;
+
+    MPI_Comm_size(comm, &size);
+    // reducing time to process 0 of the group
+    MPI_Reduce(&elapsed_time, &mean_time, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+
+    return mean_time / size;
   }
 
 public:
@@ -376,9 +415,9 @@ public:
           //   << std::endl;
           this->scalarSum += received_scalar;
         }
-        std::cout << "\n\n\n\n RESULT SCALAR SUM: " << this->scalarSum;
+        std::cout << "\n[Process " << this->rank << "] " << "Total scalar: " << this->scalarSum;
         this->endTimer();
-        std::cout << "vector size" << this->vectorSize << std::endl;
+        // std::cout << "vector size" << this->vectorSize << std::endl;
         this->output("lab-2.output.csv", std::map<std::string, std::string>{{"V", std::to_string(this->vectorSize)}});
         this->printElapsedTime();
       } else {
@@ -658,7 +697,7 @@ public:
     for (int i = 0; i < argc; i++) {
       std::string argument = argv[i];
       if (argument == "-N") {
-        if (this->rank == std::atoi(argv[i + 1])){
+        if (this->rank == std::atoi(argv[i + 1])) {
           this->N = 1;
         }
         isNIsPresented = true;
@@ -674,30 +713,30 @@ public:
       throw std::runtime_error("ERROR: min equal or more than max value");
 
     // randomizing N value if it wasn't presented previously
-    if (this->N != 1){
+    if (this->N != 1) {
       this->N = rand() % 2;
     }
     // if N is true then generate value for A to sum it later in whole group
-    if (this->N){
+    if (this->N) {
       this->A = Util::generateDoubleValue(min, max);
       this->group = 1;
     } else {
       this->group = MPI_UNDEFINED;
     }
   }
-  
+
   void run() {
     // splitting process into different groups
     MPI_Comm_split(MPI_COMM_WORLD, this->group, this->rank, &this->comm);
-    
+
     // starting timer
     this->startTimer();
     if (this->N) {
       // getting new rank of the process
-      MPI_Comm_rank(this->comm, &this->groupRank);
+      MPI_Comm_rank(this->comm, &this->comm);
       // waiting for other processes
       MPI_Barrier(this->comm);
-      // getting group size 
+      // getting group size
       MPI_Comm_size(this->comm, &this->groupSize);
 
       // calling MPI_Allreduce to count sum of A's for processes with N == true
@@ -707,16 +746,17 @@ public:
                 << " result sum: " << sum << " [N: " << this->N << ", "
                 << "A: " << this->A << "]" << std::endl;
     } else {
-      std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing [N = " << this->N << "]";
+      std::cout << "Process " << this->rank << " (gRank: " << this->groupRank << ") wasn't summing [N = " << this->N
+                << "]";
     }
     // ending timer
     this->endTimer();
 
-    // calculating mean time (actual mean will count process 0 later) 
-    double elapsed_time = this->getElapsedTime();   
+    // calculating mean time (actual mean will count process 0 later)
+    double elapsed_time = this->getElapsedTime();
     double mean_time;
     // reducing time to process 0 of the group (group MPI_UNDEFINED not counting)
-    if (this->N){
+    if (this->N) {
       MPI_Reduce(&elapsed_time, &mean_time, 1, MPI_DOUBLE, MPI_SUM, 0, this->comm);
     }
     // process with rank 0 will calculate mean time and put it in file
@@ -727,7 +767,7 @@ public:
       this->output("lab-5.output.csv", {{"mean_time", std::to_string(mean_time)}});
       std::cout << "\nTotal elapsed time: " << mean_time;
     }
-    
+
     MPI_Finalize();
   }
 };
@@ -742,14 +782,14 @@ protected:
   int commRank, commSize, cartCoords[3];
   int subCommRank, subCommSize;
   // Topology parameters
-  int dims[3] {2, 2, -1};        
-  int periods[3] {true, true, true};
-  bool reorder = false;    
-            
+  int dims[3]{2, 2, -1};
+  int periods[3]{true, true, true};
+  bool reorder = false;
+
 public:
   TopologyProcess(int argc, char *argv[]) : Process(argc, argv) {
     // If total processes not 8 or 12 then throw exception
-    if (this->totalProcesses != 8 && this->totalProcesses != 12){
+    if (this->totalProcesses != 8 && this->totalProcesses != 12) {
       throw std::runtime_error("ERROR: Wrong number of processes. It can be ONLY 8 or 12.");
       MPI_Finalize();
     }
@@ -759,34 +799,44 @@ public:
 
     // Creating 3D topology
     MPI_Dims_create(this->totalProcesses, 3, this->dims);
-    int cartErr = MPI_Cart_create(MPI_COMM_WORLD, 3, this->dims, this->periods, this->reorder, &this->comm);
+    int cartErr = MPI_Cart_create(MPI_COMM_WORLD, 3, this->dims, this->periods, this->reorder, &this->subComm);
     if (cartErr != MPI_SUCCESS) {
       throw std::runtime_error("ERROR: MPI_Cart_create failed.");
     }
 
     // rank and coords of process
-    MPI_Comm_rank(this->comm, &this->commRank);
-    MPI_Cart_coords(this->comm, this->commRank, 3, this->cartCoords);
-    
+    MPI_Comm_rank(this->subComm, &this->commRank);
+    MPI_Cart_coords(this->subComm, this->commRank, 3, this->cartCoords);
+
     // Generating 'A' value
     srand(time(0) * rank * rank);
     this->A = Util::generateDoubleValue();
 
-    int remain_dims[3] {1, 1, 0};
-    MPI_Cart_sub(this->comm, remain_dims, &this->subComm);
+    int remain_dims[3]{1, 1, 0};
+    MPI_Cart_sub(this->subComm, remain_dims, &this->subComm);
 
-    // Subgroup rank and size    
+    // Subgroup rank and size
     MPI_Comm_rank(this->subComm, &this->subCommRank);
     MPI_Comm_size(this->subComm, &this->subCommSize);
   }
-  void run() { 
-    // Print position in 3D grid 
-    printf("[Process %d] I am located at (%d, %d, %d) with value A = %f.\n", this->commRank, this->cartCoords[0],this->cartCoords[1], this->cartCoords[2], this->A);
+  void run() {
+    this->startTimer();
+    // Print position in 3D grid
+    printf("[Process %d] I am located at (%d, %d, %d) with value A = %f.\n", this->subCommRank, this->cartCoords[0],
+           this->cartCoords[1], this->cartCoords[2], this->A);
 
     double subSum = 0.0;
     MPI_Allreduce(&this->A, &subSum, 1, MPI_DOUBLE, MPI_SUM, this->subComm);
-
     printf("[Subgroup %d, process %d] Sum of values in matrix: %f\n", this->cartCoords[2], this->subCommRank, subSum);
+    this->endTimer();
+
+    // calculating mean time
+    double mean_time = this->calculateMeanElapsedTime(this->subComm);
+    // process with rank 0 will calculate mean time and put it in file
+    if (this->subCommRank == 0) {
+      this->output("lab-6.output.csv", {{"mean_time", std::to_string(mean_time)}});
+      printf("[Subgroup %d, process %d] Mean elapsed time: %f\n", this->cartCoords[2], this->subCommRank, mean_time);
+    }
 
     MPI_Finalize();
   }
@@ -794,17 +844,232 @@ public:
 
 // LR7
 class MatrixProcess : public Process {
-private: 
-  std::vector<double> matrixA, matrixB, matrixC;
-  struct MainProcess {
-    
-  };
-  struct ChildProcess { 
 
-  };
-  
+private:
+  // matrix properties
+  int matrixSize = -1;       // initial matrix size
+  int paddedMatrixSize = -1; // matrix size to make equal blocks of sub matrices
+  std::vector<std::vector<double>> A, B, C, localA, localB, localC;
+  int procNum, blockSize;
+
+  // Topology properties
+  MPI_Comm gridComm;
+  int commRank, commSize, cartCoords[2];
+  int subCommRank, subCommSize;
+  // Topology parameters
+  int dims[2];
+  int periods[2]{true, true};
+  bool reorder = false;
+
+  // what the fuck is this returning type... (please don't beat me up for this, I already did it myself)
+  // Returning matrix of matrices total of rows * cols which looks like this:
+  // [matrix00, matrix01;
+  //  matrix10, matrix11]
+  // And each matrixYY contains 2D matrix of double values:
+  // [value00, value01;
+  //  value10, value11]
+  // omfg, this is terrible...
+  std::vector<std::vector<std::vector<std::vector<double>>>> splitMatrix(std::vector<std::vector<double>> matrix,
+                                                                         int rows, int cols) {
+    // Getting sizes for submatrices
+    int rowSize = matrix.size() / rows;
+    int colSize = matrix.size() / cols;
+
+    // Result matrix of matrices
+    std::vector<std::vector<std::vector<std::vector<double>>>> matrices(rows);
+    for (int row = 0; row < rows; row++) {
+      for (int col = 0; col < cols; col++) {
+        std::vector<std::vector<double>> newMatrix(rowSize, std::vector<double>(colSize));
+        for (int i = 0; i < rowSize; i++) {
+          for (int j = 0; j < colSize; j++) {
+            // Skipping some values to distribute all values to right
+            newMatrix[i][j] = matrix[i + rowSize * row][j + colSize * col];
+          }
+        }
+        matrices[row].push_back(newMatrix);
+      }
+    }
+    return matrices;
+  }
+
+  void padMatrix(std::vector<std::vector<double>> &matrix, int padSize) {
+    if (this->matrixSize == padSize) {
+      return;
+    }
+
+    // resizing first dimension
+    matrix.resize(padSize);
+
+    // Resizing second dimension
+    for (int i = 0; i < padSize; i++) {
+      matrix[i].resize(padSize);
+    }
+    this->paddedMatrixSize = padSize;
+  }
+
+  // Method to multiply local A and B matrices
+  std::vector<std::vector<double>> multiplyBlocks(std::vector<std::vector<double>> &A,
+                                                  std::vector<std::vector<double>> &B) {
+    int size = A.size();
+    std::vector<std::vector<double>> C(size, std::vector<double>(size, 0.0));
+    for (int i = 0; i < size; i++) {
+      for (int j = 0; j < size; j++) {
+        for (int k = 0; k < size; k++) {
+          C[i][j] += A[i][k] * B[k][j];
+        }
+      }
+    }
+    return C;
+  }
+
+  // Cutting matrix to needed size
+  // Used when got final C matrix and need to cut empty fields
+  std::vector<std::vector<double>> cutMatrix(std::vector<std::vector<double>> matrix, int size) {
+    std::vector<std::vector<double>> newMatrix(size, std::vector<double>(size));
+    for (int i = 0; i < size; i++) {
+      for (int j = 0; j < size; j++) {
+        newMatrix[i][j] = matrix[i][j];
+      }
+    }
+    return newMatrix;
+  }
+
+  void printMatrix(std::vector<std::vector<double>> matrix) {
+    for (int i = 0; i < matrix.size(); i++) {
+      for (int j = 0; j < matrix[i].size(); j++) {
+        std::cout << matrix[i][j] << " ";
+      }
+      std::cout << "\n";
+    }
+  }
+
 public:
-  MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {}
-  
-  void run() { throw std::runtime_error("This class is not implemented yet"); }
+  MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {
+    for (int i = 0; i < argc; i++) {
+      std::string argument = argv[i];
+      if (argument == "--size") {
+        this->matrixSize = std::atoi(argv[i + 1]);
+      }
+    }
+
+    // checking if matrix size was presented, otherwise raise exception
+    if (this->matrixSize <= 1) {
+      throw std::runtime_error("Please type valid matrix size that will be generated with argument '--size "
+                               "some_value'. It should be more than 1.");
+    }
+
+    // Getting sqrt of all processes to create grid for matrix multiplication
+    this->procNum = static_cast<int>(std::sqrt(this->totalProcesses));
+    if (this->procNum * this->procNum != this->totalProcesses) {
+      throw std::runtime_error("Number of processes should be perfect square (n * n)");
+    }
+
+    // Settings dims for future topology
+    this->dims[0] = this->dims[1] = this->procNum;
+
+    // getting size of submatrixes
+    this->blockSize = this->matrixSize / this->procNum;
+  }
+
+  std::vector<double> matrixToVector(std::vector<std::vector<double>> matrix) {
+    int size = matrix.size() * matrix.size();
+    std::vector<double> vector(size);
+    for (int i = 0; i < size; i++)
+    {
+      for (int j = 0; j < size; j++)
+      {
+        vector.push_back(matrix[i][j]);
+      }
+    }
+    return vector;
+  }
+
+  void run() {
+    // Generating matrix in process 0
+    if (this->rank == 0) {
+      srand(time(0) * 3); // setting random seed
+      this->A = Util::generateRandomMatrix(this->matrixSize);
+      this->B = Util::generateRandomMatrix(this->matrixSize);
+      this->C = std::vector<std::vector<double>>(this->matrixSize, std::vector<double>(this->matrixSize, 0));
+
+      // If matrix size can't be divided to number of processes we are adding empty data to it to be able to be divided
+      // by number of processes
+      if (this->matrixSize % this->procNum != 0) {
+        int paddingSize = this->matrixSize + (this->procNum - this->matrixSize % this->procNum);
+        this->padMatrix(this->A, paddingSize);
+        this->padMatrix(this->B, paddingSize);
+      }
+    }
+    // Creating empty local matrices for each process with size of smaller blocks
+    this->localA = std::vector<std::vector<double>>(this->blockSize, std::vector<double>(this->blockSize));
+    this->localB = std::vector<std::vector<double>>(this->blockSize, std::vector<double>(this->blockSize));
+    this->localC = std::vector<std::vector<double>>(this->blockSize, std::vector<double>(this->blockSize, 0));
+
+    // Creating communicator with 2D grid topology (size of this is numProc squared)
+    MPI_Dims_create(this->totalProcesses, 2, this->dims);
+    int cartErr = MPI_Cart_create(MPI_COMM_WORLD, 2, this->dims, this->periods, this->reorder, &this->gridComm);
+    if (cartErr != MPI_SUCCESS) {
+      throw std::runtime_error("ERROR: MPI_Cart_create failed.");
+    }
+
+    // Getting properties of topology
+    MPI_Comm_rank(this->gridComm, &this->commRank);
+    MPI_Cart_coords(this->gridComm, this->commRank, 2, this->cartCoords);
+
+    // Splitting matrices A and B for further sending to other processes
+    auto blocksA = this->splitMatrix(this->A, this->procNum, this->procNum);
+    auto blocksB = this->splitMatrix(this->B, this->procNum, this->procNum);
+    // Process 0 sends sub matrices to other processes
+    if (this->rank == 0) {
+      for (int i = 0; i < procNum; i++) {
+        for (int j = 0; j < procNum; j++) {
+          // if sub matrix is for process 0, just leave it here, otherwise send them to other processes
+          if (i == 0 && j == 0) {
+            this->localA = blocksA[i][j];
+            this->localB = blocksB[i][j];
+          } else {
+            int sendSize = this->blockSize * this->blockSize;
+            int dest = i * this->procNum + j;
+            MPI_Send(blocksA[i][j].data()->data(), sendSize, MPI_DOUBLE, dest, 0, this->gridComm);
+            MPI_Send(blocksB[i][j].data()->data(), sendSize, MPI_DOUBLE, dest, 1, this->gridComm);
+          }
+        }
+      }
+    } else { // Other processes are begin to receiving matrices A and B
+      int recvSize = this->blockSize * this->blockSize;
+      MPI_Recv(this->localA.data()->data(), recvSize, MPI_DOUBLE, 0, 0, this->gridComm, MPI_STATUS_IGNORE);
+      MPI_Recv(this->localB.data()->data(), recvSize, MPI_DOUBLE, 0, 1, this->gridComm, MPI_STATUS_IGNORE);
+    }
+    // FIXME: ОШИБКА ВОЗНИКАЕТ ЗДЕСЬ, ПРЕДЫДУЩИЙ КОД РАБОТАЕТ КОРРЕКТНО
+    for (int step = 0; step < this->procNum; step++) {
+      int src, dest;
+      int size = this->blockSize * this->blockSize;
+      // Sending A matrix vertically up
+      MPI_Cart_shift(this->gridComm, 0, -1, &src, &dest);
+      MPI_Sendrecv_replace(this->localA.data()->data(), size, MPI_DOUBLE, dest, 0, src, 0, this->gridComm,
+                          MPI_STATUS_IGNORE);
+
+      // Sending B matrix horizontally to the left
+      MPI_Cart_shift(this->gridComm, 0, -1, &src, &dest);
+      MPI_Sendrecv_replace(this->localA.data()->data(), size, MPI_DOUBLE, dest, 0, src, 0, this->gridComm,
+                          MPI_STATUS_IGNORE);
+
+
+      // Calculating C matrix
+      auto tempC = this->multiplyBlocks(this->localA, this->localB);
+      for (int i = 0; i < this->blockSize; i++) {
+        for (int j = 0; j < this->blockSize; j++) {
+          this->localC[i][j] += tempC[i][j];
+        }
+      }
+    }
+    printf("\n[ Process %d] Local C: \n", this->rank);
+    this->printMatrix(this->localC);
+  //  std::vector<double> sendVectorC = this->matrixToVector(this->localC);
+    //std::vector<double> recvVectorC(this->paddedMatrixSize * this->paddedMatrixSize);
+    //MPI_Gather(sendVectorC.data(), sendVectorC.size(), MPI_DOUBLE, recvVectorC.data(), this->paddedMatrixSize * this->paddedMatrixSize, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+
+    MPI_Finalize();
+  }
 };
