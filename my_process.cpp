@@ -4,9 +4,10 @@
 #include <iostream>
 #include <map>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <sstream>
+
 
 class Util {
 public:
@@ -847,8 +848,8 @@ class MatrixProcess : public Process {
 
 private:
   // matrix properties
-  int matrixSize = -1;       // initial matrix size
-  int paddedMatrixSize = -1; // matrix size to make equal blocks of sub matrices
+  int initMatrixSize = -1; // initial matrix size
+  int matrixSize = -1;     // matrix size to make equal blocks of sub matrices
   std::vector<std::vector<double>> A, B, C, localA, localB, localC;
   int procNum, blockSize;
 
@@ -856,18 +857,16 @@ private:
   MPI_Comm gridComm;
   int commRank, commSize, coords[2];
   // Topology parameters
-  int dims[2]{0, 0};
-  int periods[2]{true, true};
-  bool reorder = false;
+  int dims[2]{0, 0}; // Changed via MPI function in constructor
+  const int periods[2]{true, true};
+  const bool reorder = false;
 
-  // what the fuck is this returning type... (please don't beat me up for this, I already did it myself)
-  // Returning matrix of matrices total of rows * cols which looks like this:
-  // [matrix00, matrix01;
-  //  matrix10, matrix11]
-  // And each matrixYY contains 2D matrix of double values:
-  // [value00, value01;
-  //  value10, value11]
-  // omfg, this is terrible...
+
+  /// @brief Turns one matrix to separate ones
+  /// @param matrix matrix to split
+  /// @param rows number of rows to split it to
+  /// @param cols number of cols to split it to
+  /// @return matrix of matrices (these inside contain double values)
   std::vector<std::vector<std::vector<std::vector<double>>>> splitMatrix(std::vector<std::vector<double>> matrix,
                                                                          int rows, int cols) {
     // Getting sizes for submatrices
@@ -890,20 +889,22 @@ private:
     }
     return matrices;
   }
-
+  /// @brief Increases original matrix to desired size to fit to Cannon's algorithm
+  /// @param matrix original matrix
+  /// @param padSize size to which matirx will be increased
   void padMatrix(std::vector<std::vector<double>> &matrix, int padSize) {
-    if (this->matrixSize == padSize) {
+    if (this->initMatrixSize == padSize) {
       return;
     }
 
-    // resizing first dimension
+    // Resising vector of vectors
     matrix.resize(padSize);
 
-    // Resizing second dimension
+    // Resizing vectors of doubles and filling new space with 0
     for (int i = 0; i < padSize; i++) {
-      matrix[i].resize(padSize);
+      matrix[i].resize(padSize, 0);
     }
-    this->paddedMatrixSize = padSize;
+    this->matrixSize = padSize;
   }
 
   // Method to multiply local A and B matrices
@@ -921,8 +922,10 @@ private:
     return C;
   }
 
-  // Cutting matrix to needed size
-  // Used when got final C matrix and need to cut empty fields
+  /// @brief Cutting matrix to desired size. Needed when original matrix size was changed to fit to Cannon's algorithm
+  /// @param matrix 
+  /// @param size 
+  /// @return matrix
   std::vector<std::vector<double>> cutMatrix(std::vector<std::vector<double>> matrix, int size) {
     std::vector<std::vector<double>> newMatrix(size, std::vector<double>(size));
     for (int i = 0; i < size; i++) {
@@ -932,7 +935,8 @@ private:
     }
     return newMatrix;
   }
-
+  /// @brief Prints matrix using iostream
+  /// @param matrix 
   void printMatrix(std::vector<std::vector<double>> matrix) {
     for (int i = 0; i < matrix.size(); i++) {
       for (int j = 0; j < matrix[i].size(); j++) {
@@ -941,7 +945,9 @@ private:
       std::cout << "\n";
     }
   }
-
+  /// @brief Turns vector to string. Used to print it in the terminal
+  /// @param vector vector which has to be stringified
+  /// @return string vector
   std::string vectorToString(std::vector<double> vector) {
     std::string stringVector = "";
     for (int i = 0; i < vector.size(); i++) {
@@ -952,15 +958,19 @@ private:
     return stringVector;
   }
 
-  static std::string matrixToString(const std::vector<std::vector<double>>& matrix) {
-    if (matrix.empty()) return "";
+  /// @brief Turns matrix to string. Used to print it in the terminal
+  /// @param matrix matrix which has to be stringified
+  /// @return string matrix
+  static std::string matrixToString(const std::vector<std::vector<double>> &matrix) {
+    if (matrix.empty())
+      return "";
 
-    // Вычисление ширины каждого столбца
+    // Getting width of each column
     std::vector<size_t> columnWidths;
     size_t numCols = matrix[0].size();
     columnWidths.resize(numCols, 0);
 
-    for (const auto& row : matrix) {
+    for (const auto &row : matrix) {
       for (size_t j = 0; j < row.size(); ++j) {
         std::ostringstream oss;
         oss << std::fixed << std::setprecision(2) << row[j];
@@ -968,21 +978,21 @@ private:
       }
     }
 
-    // Форматирование строки
+    // Formatting string
     std::ostringstream formattedMatrix;
-    for (const auto& row : matrix) {
+    for (const auto &row : matrix) {
       for (size_t j = 0; j < row.size(); ++j) {
-        // FIXME: change SETPRECISION to not zero after
-        formattedMatrix << std::setw(columnWidths[j]) 
-                        << std::fixed << std::setprecision(0) 
-                        << row[j] 
-                        << " ";
+        formattedMatrix << std::setw(columnWidths[j]) << std::fixed << std::setprecision(2) << row[j] << " ";
       }
       formattedMatrix << "\n";
     }
 
     return formattedMatrix.str();
   }
+  
+  /// @brief Turning matrix to vector. Used to compact matrix and send it to another process
+  /// @param matrix matrix to be converted to vector
+  /// @return vector of values with type double
   std::vector<double> matrixToVector(std::vector<std::vector<double>> matrix) {
     int rows = matrix.size();
     int cols = matrix[0].size();
@@ -995,6 +1005,11 @@ private:
     return vectorizedMatrix;
   }
 
+  /// @brief Turns vector to matrix. User to restore matrix from received vector from another process
+  /// @param vector vector to be restored to matrix
+  /// @param rows number of rows which matrix will have 
+  /// @param cols number of cols which matrix will have
+  /// @return matrix of values with type double
   std::vector<std::vector<double>> vectorToMatrix(std::vector<double> vector, int rows, int cols) {
     std::vector<std::vector<double>> unvectorizedMatrix(rows, std::vector<double>(cols));
     for (int i = 0; i < rows; i++) {
@@ -1004,19 +1019,23 @@ private:
     }
     return unvectorizedMatrix;
   }
+
   // Turns vector which containt multiple localC matrices to proper C matrix
-  // Expample: 
+  // Expample:
   //  vector = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
   //  will be turned to matrix:
   //    1  2  5  6
   //    3  4  7  8
   //    9  10 13 14
   //    11 12 15 16
+
+  /// @brief Turns vector which contains info about different parts of matrix to actual matrix. Used in Cannon's alogrithm to assemble matrix C
+  /// @param vector vector from matrix will be assembled
+  /// @return matrix
   std::vector<std::vector<double>> collectMatrices(std::vector<double> vector) {
     int blocksNum = this->procNum;   // size of processors grid in one dimension (sqrt from processors number)
     int blockSize = this->blockSize; // block size of each small block of the matrix
-    std::vector<std::vector<double>> collectedMatrix(this->paddedMatrixSize,
-                                                     std::vector<double>(this->paddedMatrixSize));
+    std::vector<std::vector<double>> collectedMatrix(this->matrixSize, std::vector<double>(this->matrixSize));
 
     int vectorIndex = 0;
     for (int rectRow = 0; rectRow < blocksNum; rectRow++) {
@@ -1031,8 +1050,13 @@ private:
     }
     return collectedMatrix;
   }
-  // FOR TESTING PURPOSES ONLY
-  std::vector<std::vector<double>> subtractMatrices(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B) {
+
+  /// @brief Subtracts values between two matrices. Used to test if result matrix is valid. 
+  /// @param A Matrix with values that would be subtracted
+  /// @param B Matrix with values that would use to subtract
+  /// @return Subtracted matrix
+  std::vector<std::vector<double>> subtractMatrices(std::vector<std::vector<double>> A,
+                                                    std::vector<std::vector<double>> B) {
     int rows = A.size();
     int cols = A[0].size();
     std::vector<std::vector<double>> C(rows, std::vector<double>(cols));
@@ -1041,17 +1065,24 @@ private:
         C[i][j] = A[i][j] - B[i][j];
     return C;
   }
+
+  /// @brief Method for logging. I'm lazy to always type process rank so I made this method.
+  /// @param title Title of the message
+  /// @param message String which will be printed after title on the next line
+  void printStringFromProcess(std::string title, std::string message) {
+    std::cout << "\n[ Process " << this->rank + 1 << " ] " << title << "\n" << message;
+  }
 public:
   MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {
     for (int i = 0; i < argc; i++) {
       std::string argument = argv[i];
       if (argument == "--size") {
-        this->matrixSize = std::atoi(argv[i + 1]);
+        this->initMatrixSize = std::atoi(argv[i + 1]);
       }
     }
 
     // checking if matrix size was presented, otherwise raise exception
-    if (this->matrixSize <= 1) {
+    if (this->initMatrixSize <= 1) {
       throw std::runtime_error("Please type valid matrix size that will be generated with argument '--size "
                                "some_value'. It should be more than 1.");
     }
@@ -1070,31 +1101,28 @@ public:
     MPI_Comm_rank(this->gridComm, &this->commRank);
     MPI_Cart_coords(this->gridComm, this->commRank, 2, this->coords);
 
-    // If matrix size can't be divided to number of processes we are adding empty data to it to be able to be divided
+    // If matrix size can't be divided by number of processes then adding empty data to it to be able to be divided
     // by number of processes
     // ALSO changing blockSize to match paddedMatrixSize
-    if (this->matrixSize % this->procNum != 0) {
-      this->paddedMatrixSize = this->matrixSize + (this->procNum - this->matrixSize % this->procNum);
-      this->blockSize = this->paddedMatrixSize / this->procNum;
-    }
-    else {
-      this->paddedMatrixSize = this->matrixSize;
+    if (this->initMatrixSize % this->procNum != 0) {
+      this->matrixSize = this->initMatrixSize + (this->procNum - this->initMatrixSize % this->procNum);
       this->blockSize = this->matrixSize / this->procNum;
+    } else {
+      this->matrixSize = this->initMatrixSize;
+      this->blockSize = this->initMatrixSize / this->procNum;
     }
   }
-  void printStringFromProcess(std::string title, std::string message) {
-    std::cout << "\n[ Process " << this->rank + 1 << " ] " << title << "\n" << message;
-  }
-  void run() {
+ void run() {
     // Generating matrix in process 0
     if (this->rank == 0) {
-      this->A = Util::generateLinearMatrix(this->matrixSize);
-      this->B = Util::generateLinearMatrix(this->matrixSize, true);
-      this->C = std::vector<std::vector<double>>(this->matrixSize, std::vector<double>(this->matrixSize, 0));
+      this->A = Util::generateLinearMatrix(this->initMatrixSize);
+      this->B = Util::generateLinearMatrix(this->initMatrixSize, true);
+      this->C = std::vector<std::vector<double>>(this->initMatrixSize, std::vector<double>(this->initMatrixSize, 0));
 
-      if (this->paddedMatrixSize != this->matrixSize) {
-        this->padMatrix(this->A, this->paddedMatrixSize);
-        this->padMatrix(this->B, this->paddedMatrixSize);
+      // Adding filler data if matrix size does not fit into algorithm
+      if (this->matrixSize != this->initMatrixSize) {
+        this->padMatrix(this->A, this->matrixSize);
+        this->padMatrix(this->B, this->matrixSize);
       }
       this->printStringFromProcess("Matrix A:", this->matrixToString(this->A));
       this->printStringFromProcess("Matrix B:", this->matrixToString(this->B));
@@ -1142,38 +1170,39 @@ public:
     }
 
     // First initialization shift
+    // Moving on coord[i] value because first line should not move, second move on 1, third move on 2 etc.
+    // Same for columns
     int src, dest;
-    
     std::vector<double> flatLocalA = this->matrixToVector(this->localA);
     std::vector<double> flatLocalB = this->matrixToVector(this->localB);
-    if (this->coords[0] > 0) {
-      MPI_Cart_shift(this->gridComm, 1, -this->coords[0], &src, &dest);
-      MPI_Sendrecv_replace(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, dest, 0, src, 0, this->gridComm, MPI_STATUS_IGNORE);
-    }
+
+    MPI_Cart_shift(this->gridComm, 1, -this->coords[0], &src, &dest);
+    MPI_Sendrecv_replace(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, dest, 0, src, 0, this->gridComm,
+                         MPI_STATUS_IGNORE);
     this->localA = this->vectorToMatrix(flatLocalA, this->blockSize, this->blockSize);
 
-    if (this->coords[1] > 0) {
-      MPI_Cart_shift(this->gridComm, 0, -this->coords[1], &src, &dest);
-      MPI_Sendrecv_replace(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, dest, 1, src, 1, this->gridComm, MPI_STATUS_IGNORE);
-    }
+    MPI_Cart_shift(this->gridComm, 0, -this->coords[1], &src, &dest);
+    MPI_Sendrecv_replace(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, dest, 1, src, 1, this->gridComm,
+                         MPI_STATUS_IGNORE);
     this->localB = this->vectorToMatrix(flatLocalB, this->blockSize, this->blockSize);
 
     MPI_Barrier(this->gridComm);
 
+    // Actual calculating in Cannon's algorithm
     for (int step = 0; step < this->procNum; step++) {
       // Sending A matrix vertically up
-      // std::vector<double> flatLocalA = this->matrixToVector(this->localA);
       MPI_Cart_shift(this->gridComm, 1, -1, &src, &dest);
-      MPI_Sendrecv_replace(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, dest, 0, src, 0, this->gridComm, MPI_STATUS_IGNORE);
+      MPI_Sendrecv_replace(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, dest, 0, src, 0, this->gridComm,
+                           MPI_STATUS_IGNORE);
       this->localA = this->vectorToMatrix(flatLocalA, this->blockSize, this->blockSize);
 
       // Sending B matrix horizontally to the left
-      // std::vector<double> flatLocalB = this->matrixToVector(this->localB);
       MPI_Cart_shift(this->gridComm, 0, -1, &src, &dest);
-      MPI_Sendrecv_replace(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, dest, 1, src, 1, this->gridComm, MPI_STATUS_IGNORE);
+      MPI_Sendrecv_replace(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, dest, 1, src, 1, this->gridComm,
+                           MPI_STATUS_IGNORE);
       this->localB = this->vectorToMatrix(flatLocalB, this->blockSize, this->blockSize);
 
-      // Calculating C matrix
+      // Calculating C matrix from new localA and localB
       auto tempC = this->multiplyBlocks(this->localA, this->localB);
       for (int i = 0; i < this->blockSize; i++) {
         for (int j = 0; j < this->blockSize; j++) {
@@ -1184,22 +1213,21 @@ public:
 
     // Gathering all C matrices
     std::vector<double> flatLocalC = this->matrixToVector(this->localC);
-    std::vector<double> flatC(this->paddedMatrixSize * this->paddedMatrixSize);
+    std::vector<double> flatC(this->matrixSize * this->matrixSize);
     MPI_Gather(flatLocalC.data(), flatLocalC.size(), MPI_DOUBLE, flatC.data(), flatLocalC.size(), MPI_DOUBLE, 0,
                this->gridComm);
 
-   // Turning vector to a matrix again
+    // Turning vector to a matrix again
     if (this->rank == 0) {
       this->C = this->collectMatrices(flatC);
-      if (this->matrixSize != this->paddedMatrixSize) {
-        this->C = this->cutMatrix(this->C, this->matrixSize);
+      if (this->initMatrixSize != this->matrixSize) {
+        this->C = this->cutMatrix(this->C, this->initMatrixSize);
       }
 
-        this->printStringFromProcess("Result matrix C:", this->matrixToString(this->C));
+      this->printStringFromProcess("Result matrix C:", this->matrixToString(this->C));
       std::vector<std::vector<double>> standartMultiplicationC = this->multiplyBlocks(this->A, this->B);
-      this->printStringFromProcess("Matrix C with default multiplication: ", this->matrixToString(standartMultiplicationC));
+      this->printStringFromProcess("Matrix C with default multiplication: ",
+                                   this->matrixToString(standartMultiplicationC));
     }
-    //FIXME: Cut extra elements in the matrix
   }
 };
-
