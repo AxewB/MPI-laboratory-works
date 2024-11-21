@@ -6,6 +6,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <sstream>
 
 class Util {
 public:
@@ -35,15 +36,14 @@ public:
     }
     return resultMatrix;
   }
-  static std::vector<std::vector<double>> generateLinearMatrix(int size) {
+  static std::vector<std::vector<double>> generateLinearMatrix(int size, bool reverse = false) {
+    srand(time(0) * 3); // setting random seed
     std::vector<std::vector<double>> resultMatrix(size, std::vector<double>(size));
-    double newValue = 1;
-    for (int i = 0; i < size; i++) {
-      for (int j = 0; j < size; j++) {
-        resultMatrix[i][j] = newValue;
-        newValue++;
-      }
-    }
+    double newValue = reverse ? size * size : 1;
+    for (int i = 0; i < size; i++)
+      for (int j = 0; j < size; j++)
+        resultMatrix[i][j] = reverse ? newValue-- : newValue++;
+
     return resultMatrix;
   }
   static void printMatrix(std::vector<std::vector<int>> &matrix) {
@@ -852,12 +852,11 @@ private:
   std::vector<std::vector<double>> A, B, C, localA, localB, localC;
   int procNum, blockSize;
 
-  // Topology properties
+  // Topology propertiee
   MPI_Comm gridComm;
-  int commRank, commSize, cartCoords[2];
-  int subCommRank, subCommSize;
+  int commRank, commSize, coords[2];
   // Topology parameters
-  int dims[2];
+  int dims[2]{0, 0};
   int periods[2]{true, true};
   bool reorder = false;
 
@@ -943,6 +942,105 @@ private:
     }
   }
 
+  std::string vectorToString(std::vector<double> vector) {
+    std::string stringVector = "";
+    for (int i = 0; i < vector.size(); i++) {
+      double value = vector[i];
+      value = value + 0.5 - (value < 0);
+      stringVector += std::to_string((int)value) + " ";
+    }
+    return stringVector;
+  }
+
+  static std::string matrixToString(const std::vector<std::vector<double>>& matrix) {
+    if (matrix.empty()) return "";
+
+    // Вычисление ширины каждого столбца
+    std::vector<size_t> columnWidths;
+    size_t numCols = matrix[0].size();
+    columnWidths.resize(numCols, 0);
+
+    for (const auto& row : matrix) {
+      for (size_t j = 0; j < row.size(); ++j) {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << row[j];
+        columnWidths[j] = std::max(columnWidths[j], oss.str().size());
+      }
+    }
+
+    // Форматирование строки
+    std::ostringstream formattedMatrix;
+    for (const auto& row : matrix) {
+      for (size_t j = 0; j < row.size(); ++j) {
+        // FIXME: change SETPRECISION to not zero after
+        formattedMatrix << std::setw(columnWidths[j]) 
+                        << std::fixed << std::setprecision(0) 
+                        << row[j] 
+                        << " ";
+      }
+      formattedMatrix << "\n";
+    }
+
+    return formattedMatrix.str();
+  }
+  std::vector<double> matrixToVector(std::vector<std::vector<double>> matrix) {
+    int rows = matrix.size();
+    int cols = matrix[0].size();
+    std::vector<double> vectorizedMatrix(rows * cols);
+    for (int i = 0; i < rows; i++) {
+      for (int j = 0; j < cols; j++) {
+        vectorizedMatrix[j + i * cols] = matrix[i][j];
+      }
+    }
+    return vectorizedMatrix;
+  }
+
+  std::vector<std::vector<double>> vectorToMatrix(std::vector<double> vector, int rows, int cols) {
+    std::vector<std::vector<double>> unvectorizedMatrix(rows, std::vector<double>(cols));
+    for (int i = 0; i < rows; i++) {
+      for (int j = 0; j < cols; j++) {
+        unvectorizedMatrix[i][j] = vector[j + i * cols];
+      }
+    }
+    return unvectorizedMatrix;
+  }
+  // Turns vector which containt multiple localC matrices to proper C matrix
+  // Expample: 
+  //  vector = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
+  //  will be turned to matrix:
+  //    1  2  5  6
+  //    3  4  7  8
+  //    9  10 13 14
+  //    11 12 15 16
+  std::vector<std::vector<double>> collectMatrices(std::vector<double> vector) {
+    int blocksNum = this->procNum;   // size of processors grid in one dimension (sqrt from processors number)
+    int blockSize = this->blockSize; // block size of each small block of the matrix
+    std::vector<std::vector<double>> collectedMatrix(this->paddedMatrixSize,
+                                                     std::vector<double>(this->paddedMatrixSize));
+
+    int vectorIndex = 0;
+    for (int rectRow = 0; rectRow < blocksNum; rectRow++) {
+      for (int rectCol = 0; rectCol < blocksNum; rectCol++) {
+        for (int row = blockSize * rectRow; row < blockSize + blockSize * rectRow; row++) {
+          for (int col = blockSize * rectCol; col < blockSize + blockSize * rectCol; col++) {
+            collectedMatrix[row][col] = vector[vectorIndex];
+            vectorIndex++;
+          }
+        }
+      }
+    }
+    return collectedMatrix;
+  }
+  // FOR TESTING PURPOSES ONLY
+  std::vector<std::vector<double>> subtractMatrices(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B) {
+    int rows = A.size();
+    int cols = A[0].size();
+    std::vector<std::vector<double>> C(rows, std::vector<double>(cols));
+    for (int i = 0; i < rows; i++)
+      for (int j = 0; j < cols; j++)
+        C[i][j] = A[i][j] - B[i][j];
+    return C;
+  }
 public:
   MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {
     for (int i = 0; i < argc; i++) {
@@ -965,61 +1063,54 @@ public:
     }
 
     // Settings dims for future topology
-    this->dims[0] = this->dims[1] = this->procNum;
+    MPI_Dims_create(this->totalProcesses, 2, this->dims);
+    MPI_Cart_create(MPI_COMM_WORLD, 2, this->dims, this->periods, 1, &this->gridComm);
 
-    // getting size of submatrixes
-    this->blockSize = this->matrixSize / this->procNum;
-  }
+    // Getting properties of topology
+    MPI_Comm_rank(this->gridComm, &this->commRank);
+    MPI_Cart_coords(this->gridComm, this->commRank, 2, this->coords);
 
-  std::vector<double> matrixToVector(std::vector<std::vector<double>> matrix) {
-    int size = matrix.size() * matrix.size();
-    std::vector<double> vector(size);
-    for (int i = 0; i < size; i++)
-    {
-      for (int j = 0; j < size; j++)
-      {
-        vector.push_back(matrix[i][j]);
-      }
+    // If matrix size can't be divided to number of processes we are adding empty data to it to be able to be divided
+    // by number of processes
+    // ALSO changing blockSize to match paddedMatrixSize
+    if (this->matrixSize % this->procNum != 0) {
+      this->paddedMatrixSize = this->matrixSize + (this->procNum - this->matrixSize % this->procNum);
+      this->blockSize = this->paddedMatrixSize / this->procNum;
     }
-    return vector;
+    else {
+      this->paddedMatrixSize = this->matrixSize;
+      this->blockSize = this->matrixSize / this->procNum;
+    }
   }
-
+  void printStringFromProcess(std::string title, std::string message) {
+    std::cout << "\n[ Process " << this->rank + 1 << " ] " << title << "\n" << message;
+  }
   void run() {
     // Generating matrix in process 0
     if (this->rank == 0) {
-      srand(time(0) * 3); // setting random seed
-      this->A = Util::generateRandomMatrix(this->matrixSize);
-      this->B = Util::generateRandomMatrix(this->matrixSize);
+      this->A = Util::generateLinearMatrix(this->matrixSize);
+      this->B = Util::generateLinearMatrix(this->matrixSize, true);
       this->C = std::vector<std::vector<double>>(this->matrixSize, std::vector<double>(this->matrixSize, 0));
 
-      // If matrix size can't be divided to number of processes we are adding empty data to it to be able to be divided
-      // by number of processes
-      if (this->matrixSize % this->procNum != 0) {
-        int paddingSize = this->matrixSize + (this->procNum - this->matrixSize % this->procNum);
-        this->padMatrix(this->A, paddingSize);
-        this->padMatrix(this->B, paddingSize);
+      if (this->paddedMatrixSize != this->matrixSize) {
+        this->padMatrix(this->A, this->paddedMatrixSize);
+        this->padMatrix(this->B, this->paddedMatrixSize);
       }
+      this->printStringFromProcess("Matrix A:", this->matrixToString(this->A));
+      this->printStringFromProcess("Matrix B:", this->matrixToString(this->B));
     }
+
     // Creating empty local matrices for each process with size of smaller blocks
     this->localA = std::vector<std::vector<double>>(this->blockSize, std::vector<double>(this->blockSize));
     this->localB = std::vector<std::vector<double>>(this->blockSize, std::vector<double>(this->blockSize));
     this->localC = std::vector<std::vector<double>>(this->blockSize, std::vector<double>(this->blockSize, 0));
 
-    // Creating communicator with 2D grid topology (size of this is numProc squared)
-    MPI_Dims_create(this->totalProcesses, 2, this->dims);
-    int cartErr = MPI_Cart_create(MPI_COMM_WORLD, 2, this->dims, this->periods, this->reorder, &this->gridComm);
-    if (cartErr != MPI_SUCCESS) {
-      throw std::runtime_error("ERROR: MPI_Cart_create failed.");
-    }
-
-    // Getting properties of topology
-    MPI_Comm_rank(this->gridComm, &this->commRank);
-    MPI_Cart_coords(this->gridComm, this->commRank, 2, this->cartCoords);
-
     // Splitting matrices A and B for further sending to other processes
     auto blocksA = this->splitMatrix(this->A, this->procNum, this->procNum);
     auto blocksB = this->splitMatrix(this->B, this->procNum, this->procNum);
+
     // Process 0 sends sub matrices to other processes
+    int sendRecvSize = this->blockSize * this->blockSize;
     if (this->rank == 0) {
       for (int i = 0; i < procNum; i++) {
         for (int j = 0; j < procNum; j++) {
@@ -1028,32 +1119,59 @@ public:
             this->localA = blocksA[i][j];
             this->localB = blocksB[i][j];
           } else {
-            int sendSize = this->blockSize * this->blockSize;
-            int dest = i * this->procNum + j;
-            MPI_Send(blocksA[i][j].data()->data(), sendSize, MPI_DOUBLE, dest, 0, this->gridComm);
-            MPI_Send(blocksB[i][j].data()->data(), sendSize, MPI_DOUBLE, dest, 1, this->gridComm);
+            // Making vectors out of matrix and send them to correcponding processes
+            int destination = i * this->procNum + j;
+            std::vector<double> flatBlockA = this->matrixToVector(blocksA[i][j]);
+            std::vector<double> flatBlockB = this->matrixToVector(blocksB[i][j]);
+            MPI_Send(flatBlockA.data(), sendRecvSize, MPI_DOUBLE, destination, 0, this->gridComm);
+            MPI_Send(flatBlockB.data(), sendRecvSize, MPI_DOUBLE, destination, 1, this->gridComm);
           }
         }
       }
     } else { // Other processes are begin to receiving matrices A and B
-      int recvSize = this->blockSize * this->blockSize;
-      MPI_Recv(this->localA.data()->data(), recvSize, MPI_DOUBLE, 0, 0, this->gridComm, MPI_STATUS_IGNORE);
-      MPI_Recv(this->localB.data()->data(), recvSize, MPI_DOUBLE, 0, 1, this->gridComm, MPI_STATUS_IGNORE);
+      std::vector<double> flatLocalA(sendRecvSize);
+      std::vector<double> flatLocalB(sendRecvSize);
+
+      // Receiving flat matrices
+      MPI_Recv(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, 0, 0, this->gridComm, MPI_STATUS_IGNORE);
+      MPI_Recv(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, 0, 1, this->gridComm, MPI_STATUS_IGNORE);
+
+      // Turning flat matrices to actual matrices from vector
+      this->localA = this->vectorToMatrix(flatLocalA, this->blockSize, this->blockSize);
+      this->localB = this->vectorToMatrix(flatLocalB, this->blockSize, this->blockSize);
     }
-    // FIXME: ОШИБКА ВОЗНИКАЕТ ЗДЕСЬ, ПРЕДЫДУЩИЙ КОД РАБОТАЕТ КОРРЕКТНО
+
+    // First initialization shift
+    int src, dest;
+    
+    std::vector<double> flatLocalA = this->matrixToVector(this->localA);
+    std::vector<double> flatLocalB = this->matrixToVector(this->localB);
+    if (this->coords[0] > 0) {
+      MPI_Cart_shift(this->gridComm, 1, -this->coords[0], &src, &dest);
+      MPI_Sendrecv_replace(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, dest, 0, src, 0, this->gridComm, MPI_STATUS_IGNORE);
+    }
+    this->localA = this->vectorToMatrix(flatLocalA, this->blockSize, this->blockSize);
+
+    if (this->coords[1] > 0) {
+      MPI_Cart_shift(this->gridComm, 0, -this->coords[1], &src, &dest);
+      MPI_Sendrecv_replace(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, dest, 1, src, 1, this->gridComm, MPI_STATUS_IGNORE);
+    }
+    this->localB = this->vectorToMatrix(flatLocalB, this->blockSize, this->blockSize);
+
+    MPI_Barrier(this->gridComm);
+
     for (int step = 0; step < this->procNum; step++) {
-      int src, dest;
-      int size = this->blockSize * this->blockSize;
       // Sending A matrix vertically up
-      MPI_Cart_shift(this->gridComm, 0, -1, &src, &dest);
-      MPI_Sendrecv_replace(this->localA.data()->data(), size, MPI_DOUBLE, dest, 0, src, 0, this->gridComm,
-                          MPI_STATUS_IGNORE);
+      // std::vector<double> flatLocalA = this->matrixToVector(this->localA);
+      MPI_Cart_shift(this->gridComm, 1, -1, &src, &dest);
+      MPI_Sendrecv_replace(flatLocalA.data(), sendRecvSize, MPI_DOUBLE, dest, 0, src, 0, this->gridComm, MPI_STATUS_IGNORE);
+      this->localA = this->vectorToMatrix(flatLocalA, this->blockSize, this->blockSize);
 
       // Sending B matrix horizontally to the left
+      // std::vector<double> flatLocalB = this->matrixToVector(this->localB);
       MPI_Cart_shift(this->gridComm, 0, -1, &src, &dest);
-      MPI_Sendrecv_replace(this->localA.data()->data(), size, MPI_DOUBLE, dest, 0, src, 0, this->gridComm,
-                          MPI_STATUS_IGNORE);
-
+      MPI_Sendrecv_replace(flatLocalB.data(), sendRecvSize, MPI_DOUBLE, dest, 1, src, 1, this->gridComm, MPI_STATUS_IGNORE);
+      this->localB = this->vectorToMatrix(flatLocalB, this->blockSize, this->blockSize);
 
       // Calculating C matrix
       auto tempC = this->multiplyBlocks(this->localA, this->localB);
@@ -1063,13 +1181,25 @@ public:
         }
       }
     }
-    printf("\n[ Process %d] Local C: \n", this->rank);
-    this->printMatrix(this->localC);
-  //  std::vector<double> sendVectorC = this->matrixToVector(this->localC);
-    //std::vector<double> recvVectorC(this->paddedMatrixSize * this->paddedMatrixSize);
-    //MPI_Gather(sendVectorC.data(), sendVectorC.size(), MPI_DOUBLE, recvVectorC.data(), this->paddedMatrixSize * this->paddedMatrixSize, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
+    // Gathering all C matrices
+    std::vector<double> flatLocalC = this->matrixToVector(this->localC);
+    std::vector<double> flatC(this->paddedMatrixSize * this->paddedMatrixSize);
+    MPI_Gather(flatLocalC.data(), flatLocalC.size(), MPI_DOUBLE, flatC.data(), flatLocalC.size(), MPI_DOUBLE, 0,
+               this->gridComm);
 
-    MPI_Finalize();
+   // Turning vector to a matrix again
+    if (this->rank == 0) {
+      this->C = this->collectMatrices(flatC);
+      if (this->matrixSize != this->paddedMatrixSize) {
+        this->C = this->cutMatrix(this->C, this->matrixSize);
+      }
+
+        this->printStringFromProcess("Result matrix C:", this->matrixToString(this->C));
+      std::vector<std::vector<double>> standartMultiplicationC = this->multiplyBlocks(this->A, this->B);
+      this->printStringFromProcess("Matrix C with default multiplication: ", this->matrixToString(standartMultiplicationC));
+    }
+    //FIXME: Cut extra elements in the matrix
   }
 };
+
