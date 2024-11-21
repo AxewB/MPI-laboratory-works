@@ -20,5 +20,7 @@ int main(int argc, char *argv[]) {
   if (!process)
     throw std::runtime_error("No lab number presented. Pass '--lab value' in the terminal to launch one of the laboratory works");
 
-  process->run();
+  process->run(); 
+
+  MPI_Finalize();
 }
