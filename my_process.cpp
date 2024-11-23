@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-
 class Util {
 public:
   static std::vector<float> generateRandomVector(int size, float lower_bound = 0, float upper_bound = 10) {
@@ -67,9 +66,10 @@ protected:
   int availableProcesses = -1;
   int rank = -1;
   void startTimer() { this->startTime = MPI_Wtime(); }
-  void endTimer() {
+  double endTimer() {
     this->endTime = MPI_Wtime();
     this->elapsedTime = this->endTime - this->startTime;
+    return this->endTime;
   }
   void output(std::string fileName = "output.csv",
               std::map<std::string, std::string> additionalValues = std::map<std::string, std::string>()) {
@@ -203,7 +203,6 @@ public:
       send();
     }
 
-    MPI_Finalize();
   }
 };
 
@@ -443,7 +442,6 @@ public:
       }
     }
 
-    MPI_Finalize();
   }
 
   template <typename T> std::string vectorToString(std::vector<T> vec) {
@@ -602,7 +600,6 @@ public:
       }
     }
 
-    MPI_Finalize();
   }
 };
 
@@ -670,7 +667,6 @@ public:
         MPI_Send(&confirmationOutput, 1, MPI_INT, this->rank + 1, 0, MPI_COMM_WORLD);
       }
     }
-    MPI_Finalize();
   };
 };
 
@@ -769,7 +765,6 @@ public:
       std::cout << "\nTotal elapsed time: " << mean_time;
     }
 
-    MPI_Finalize();
   }
 };
 
@@ -792,7 +787,6 @@ public:
     // If total processes not 8 or 12 then throw exception
     if (this->totalProcesses != 8 && this->totalProcesses != 12) {
       throw std::runtime_error("ERROR: Wrong number of processes. It can be ONLY 8 or 12.");
-      MPI_Finalize();
     }
 
     // Set third dimension size
@@ -804,8 +798,7 @@ public:
     if (cartErr != MPI_SUCCESS) {
       throw std::runtime_error("ERROR: MPI_Cart_create failed.");
     }
-
-    // rank and coords of process
+// rank and coords of process
     MPI_Comm_rank(this->subComm, &this->commRank);
     MPI_Cart_coords(this->subComm, this->commRank, 3, this->cartCoords);
 
@@ -821,31 +814,31 @@ public:
     MPI_Comm_size(this->subComm, &this->subCommSize);
   }
   void run() {
-    this->startTimer();
     // Print position in 3D grid
-    printf("[Process %d] I am located at (%d, %d, %d) with value A = %f.\n", this->subCommRank, this->cartCoords[0],
-           this->cartCoords[1], this->cartCoords[2], this->A);
+    printf("[Process %d] I am located at (%d, %d, %d) with subRank %d and A value = %f.\n", this->subCommRank, this->cartCoords[0],
+           this->cartCoords[1], this->cartCoords[2], this->subCommRank, this->A);
 
+    // starting timer before reducing
+    this->startTimer();
     double subSum = 0.0;
     MPI_Allreduce(&this->A, &subSum, 1, MPI_DOUBLE, MPI_SUM, this->subComm);
     printf("[Subgroup %d, process %d] Sum of values in matrix: %f\n", this->cartCoords[2], this->subCommRank, subSum);
     this->endTimer();
 
-    // calculating mean time
+    // calculating mean time from all the processes
     double mean_time = this->calculateMeanElapsedTime(this->subComm);
+
     // process with rank 0 will calculate mean time and put it in file
     if (this->subCommRank == 0) {
       this->output("lab-6.output.csv", {{"mean_time", std::to_string(mean_time)}});
       printf("[Subgroup %d, process %d] Mean elapsed time: %f\n", this->cartCoords[2], this->subCommRank, mean_time);
     }
-
-    MPI_Finalize();
   }
 };
 
 // LR7
+// Realization of Cannon's algorithm
 class MatrixProcess : public Process {
-
 private:
   // matrix properties
   int initMatrixSize = -1; // initial matrix size
@@ -853,14 +846,14 @@ private:
   std::vector<std::vector<double>> A, B, C, localA, localB, localC;
   int procNum, blockSize;
 
-  // Topology propertiee
+  // Topology properties
   MPI_Comm gridComm;
   int commRank, commSize, coords[2];
+
   // Topology parameters
-  int dims[2]{0, 0}; // Changed via MPI function in constructor
+  int dims[2]{0, 0}; // Would be changed via MPI function in constructor
   const int periods[2]{true, true};
   const bool reorder = false;
-
 
   /// @brief Turns one matrix to separate ones
   /// @param matrix matrix to split
@@ -923,8 +916,8 @@ private:
   }
 
   /// @brief Cutting matrix to desired size. Needed when original matrix size was changed to fit to Cannon's algorithm
-  /// @param matrix 
-  /// @param size 
+  /// @param matrix
+  /// @param size
   /// @return matrix
   std::vector<std::vector<double>> cutMatrix(std::vector<std::vector<double>> matrix, int size) {
     std::vector<std::vector<double>> newMatrix(size, std::vector<double>(size));
@@ -936,7 +929,7 @@ private:
     return newMatrix;
   }
   /// @brief Prints matrix using iostream
-  /// @param matrix 
+  /// @param matrix
   void printMatrix(std::vector<std::vector<double>> matrix) {
     for (int i = 0; i < matrix.size(); i++) {
       for (int j = 0; j < matrix[i].size(); j++) {
@@ -989,7 +982,7 @@ private:
 
     return formattedMatrix.str();
   }
-  
+
   /// @brief Turning matrix to vector. Used to compact matrix and send it to another process
   /// @param matrix matrix to be converted to vector
   /// @return vector of values with type double
@@ -1007,7 +1000,7 @@ private:
 
   /// @brief Turns vector to matrix. User to restore matrix from received vector from another process
   /// @param vector vector to be restored to matrix
-  /// @param rows number of rows which matrix will have 
+  /// @param rows number of rows which matrix will have
   /// @param cols number of cols which matrix will have
   /// @return matrix of values with type double
   std::vector<std::vector<double>> vectorToMatrix(std::vector<double> vector, int rows, int cols) {
@@ -1029,7 +1022,8 @@ private:
   //    9  10 13 14
   //    11 12 15 16
 
-  /// @brief Turns vector which contains info about different parts of matrix to actual matrix. Used in Cannon's alogrithm to assemble matrix C
+  /// @brief Turns vector which contains info about different parts of matrix to actual matrix. Used in Cannon's
+  /// alogrithm to assemble matrix C
   /// @param vector vector from matrix will be assembled
   /// @return matrix
   std::vector<std::vector<double>> collectMatrices(std::vector<double> vector) {
@@ -1051,7 +1045,7 @@ private:
     return collectedMatrix;
   }
 
-  /// @brief Subtracts values between two matrices. Used to test if result matrix is valid. 
+  /// @brief Subtracts values between two matrices. Used to test if result matrix is valid.
   /// @param A Matrix with values that would be subtracted
   /// @param B Matrix with values that would use to subtract
   /// @return Subtracted matrix
@@ -1072,6 +1066,7 @@ private:
   void printStringFromProcess(std::string title, std::string message) {
     std::cout << "\n[ Process " << this->rank + 1 << " ] " << title << "\n" << message;
   }
+
 public:
   MatrixProcess(int argc, char *argv[]) : Process(argc, argv) {
     for (int i = 0; i < argc; i++) {
@@ -1112,11 +1107,11 @@ public:
       this->blockSize = this->initMatrixSize / this->procNum;
     }
   }
- void run() {
+  void run() {
     // Generating matrix in process 0
     if (this->rank == 0) {
-      this->A = Util::generateLinearMatrix(this->initMatrixSize);
-      this->B = Util::generateLinearMatrix(this->initMatrixSize, true);
+      this->A = Util::generateRandomMatrix(this->initMatrixSize);
+      this->B = Util::generateRandomMatrix(this->initMatrixSize);
       this->C = std::vector<std::vector<double>>(this->initMatrixSize, std::vector<double>(this->initMatrixSize, 0));
 
       // Adding filler data if matrix size does not fit into algorithm
@@ -1124,8 +1119,8 @@ public:
         this->padMatrix(this->A, this->matrixSize);
         this->padMatrix(this->B, this->matrixSize);
       }
-      this->printStringFromProcess("Matrix A:", this->matrixToString(this->A));
-      this->printStringFromProcess("Matrix B:", this->matrixToString(this->B));
+      // this->printStringFromProcess("Matrix A:", this->matrixToString(this->A));
+      // this->printStringFromProcess("Matrix B:", this->matrixToString(this->B));
     }
 
     // Creating empty local matrices for each process with size of smaller blocks
@@ -1168,6 +1163,9 @@ public:
       this->localA = this->vectorToMatrix(flatLocalA, this->blockSize, this->blockSize);
       this->localB = this->vectorToMatrix(flatLocalB, this->blockSize, this->blockSize);
     }
+
+    // Strarting from first shift timer will be started too
+    this->startTimer();
 
     // First initialization shift
     // Moving on coord[i] value because first line should not move, second move on 1, third move on 2 etc.
@@ -1216,7 +1214,11 @@ public:
     std::vector<double> flatC(this->matrixSize * this->matrixSize);
     MPI_Gather(flatLocalC.data(), flatLocalC.size(), MPI_DOUBLE, flatC.data(), flatLocalC.size(), MPI_DOUBLE, 0,
                this->gridComm);
+    // Taking time after Cannons algorithm
+    this->endTimer();
+    double timeBeforeStandartMultiplication = this->getElapsedTime();
 
+    // And because process 0 gathers all the result data it will output this into the console and file
     // Turning vector to a matrix again
     if (this->rank == 0) {
       this->C = this->collectMatrices(flatC);
@@ -1224,10 +1226,12 @@ public:
         this->C = this->cutMatrix(this->C, this->initMatrixSize);
       }
 
-      this->printStringFromProcess("Result matrix C:", this->matrixToString(this->C));
-      std::vector<std::vector<double>> standartMultiplicationC = this->multiplyBlocks(this->A, this->B);
-      this->printStringFromProcess("Matrix C with default multiplication: ",
-                                   this->matrixToString(standartMultiplicationC));
+      // Printing time into the file
+      this->output("lab-7.output.csv",
+                   std::map<std::string, std::string>{{"MatrixSize", std::to_string(this->initMatrixSize)},
+                                                      {"PaddedSize", std::to_string(this->matrixSize)}});
+
+
     }
   }
 };
