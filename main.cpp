@@ -23,4 +23,5 @@ int main(int argc, char *argv[]) {
   process->run(); 
 
   MPI_Finalize();
+  return 0;
 }

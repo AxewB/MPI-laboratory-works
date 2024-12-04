@@ -31,7 +31,7 @@ public:
     std::vector<std::vector<double>> resultMatrix(size, std::vector<double>(size));
     for (int i = 0; i < size; i++) {
       for (int j = 0; j < size; j++) {
-        resultMatrix[i][j] = rand() % 10;
+        resultMatrix[i][j] = Util::generateDoubleValue();
       }
     }
     return resultMatrix;
@@ -202,7 +202,6 @@ public:
     } else {
       send();
     }
-
   }
 };
 
@@ -441,7 +440,6 @@ public:
         }
       }
     }
-
   }
 
   template <typename T> std::string vectorToString(std::vector<T> vec) {
@@ -599,7 +597,6 @@ public:
         client.receiveConfirmation(this);
       }
     }
-
   }
 };
 
@@ -764,7 +761,6 @@ public:
       this->output("lab-5.output.csv", {{"mean_time", std::to_string(mean_time)}});
       std::cout << "\nTotal elapsed time: " << mean_time;
     }
-
   }
 };
 
@@ -798,7 +794,7 @@ public:
     if (cartErr != MPI_SUCCESS) {
       throw std::runtime_error("ERROR: MPI_Cart_create failed.");
     }
-// rank and coords of process
+    // rank and coords of process
     MPI_Comm_rank(this->subComm, &this->commRank);
     MPI_Cart_coords(this->subComm, this->commRank, 3, this->cartCoords);
 
@@ -813,10 +809,11 @@ public:
     MPI_Comm_rank(this->subComm, &this->subCommRank);
     MPI_Comm_size(this->subComm, &this->subCommSize);
   }
+
   void run() {
     // Print position in 3D grid
-    printf("[Process %d] I am located at (%d, %d, %d) with subRank %d and A value = %f.\n", this->subCommRank, this->cartCoords[0],
-           this->cartCoords[1], this->cartCoords[2], this->subCommRank, this->A);
+    printf("[Process %d] I am located at (%d, %d, %d) with subRank %d and A value = %f.\n", this->subCommRank,
+           this->cartCoords[0], this->cartCoords[1], this->cartCoords[2], this->subCommRank, this->A);
 
     // starting timer before reducing
     this->startTimer();
@@ -1222,16 +1219,16 @@ public:
     // Turning vector to a matrix again
     if (this->rank == 0) {
       this->C = this->collectMatrices(flatC);
+      // Cutting matrix if it's size was changed by padding
       if (this->initMatrixSize != this->matrixSize) {
         this->C = this->cutMatrix(this->C, this->initMatrixSize);
       }
-
       // Printing time into the file
       this->output("lab-7.output.csv",
-                   std::map<std::string, std::string>{{"MatrixSize", std::to_string(this->initMatrixSize)},
+                    std::map<std::string, std::string>{{"MatrixSize", std::to_string(this->initMatrixSize)},
                                                       {"PaddedSize", std::to_string(this->matrixSize)}});
 
-
+      this->printStringFromProcess("Result matrix C", this->matrixToString(this->C));
     }
   }
 };
